@@ -63,10 +63,14 @@ if ($method === 'POST') {
         }
     }
 
-    $stmt = $pdo->prepare("INSERT INTO etudiants (code_etudiant, nom, prenom, niveau, encadrant_id, option_id, titre_sujet, date_debut, date_fin)
-        VALUES (?,?,?,?,?,?,?,?,?)");
-    $stmt->execute([$d['code_etudiant'], $d['nom'], $d['prenom'], $d['niveau'] ?? null, $d['encadrant_id'] ?? null,
-        $d['option_id'] ?? null, $d['titre_sujet'] ?? null, $d['date_debut'] ?? null, $d['date_fin'] ?? null]);
+    $stmt = $pdo->prepare("INSERT INTO etudiants (code_etudiant, nom, prenom, niveau, encadrant_id, option_id, titre_sujet, date_debut, date_fin, resume_projet, mots_cles_projet)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    $stmt->execute([
+        $d['code_etudiant'], $d['nom'], $d['prenom'], $d['niveau'] ?? null, $d['encadrant_id'] ?? null,
+        $d['option_id'] ?? null, $d['titre_sujet'] ?? null, $d['date_debut'] ?? null, $d['date_fin'] ?? null,
+        $d['resume_projet'] ?? null,
+        isset($d['mots_cles_projet']) ? json_encode($d['mots_cles_projet']) : null,
+    ]);
     ok(['id' => $pdo->lastInsertId()], 'Étudiant créé', 201);
 }
 
@@ -86,8 +90,14 @@ if ($method === 'PUT') {
         }
     }
 
-    $stmt = $pdo->prepare("UPDATE etudiants SET nom=?, prenom=?, niveau=?, encadrant_id=?, titre_sujet=?, date_debut=?, date_fin=? WHERE id=?");
-    $stmt->execute([$d['nom'], $d['prenom'], $d['niveau'], $d['encadrant_id'], $d['titre_sujet'], $d['date_debut'], $d['date_fin'], $id]);
+    $stmt = $pdo->prepare("UPDATE etudiants SET nom=?, prenom=?, niveau=?, encadrant_id=?, titre_sujet=?, date_debut=?, date_fin=?, resume_projet=?, mots_cles_projet=? WHERE id=?");
+    $stmt->execute([
+        $d['nom'], $d['prenom'], $d['niveau'], $d['encadrant_id'], $d['titre_sujet'],
+        $d['date_debut'], $d['date_fin'],
+        $d['resume_projet'] ?? null,
+        isset($d['mots_cles_projet']) ? json_encode($d['mots_cles_projet']) : null,
+        $id,
+    ]);
     ok(null, 'Étudiant mis à jour');
 }
 

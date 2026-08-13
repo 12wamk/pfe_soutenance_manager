@@ -15,6 +15,10 @@ backend/uploads/
 backend/mail_log.txt
 *.log
 
+# Python (AI service)
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db

@@ -2,24 +2,22 @@
 /**
  * Configuration du chatbot.
  *
- * MODE LOCAL (par défaut, sans clé) : le chatbot répond via des règles + des
- * requêtes en base sur les données réelles de l'utilisateur connecté. Gratuit,
- * fonctionne hors-ligne, mais ne couvre que les questions prévues dans le code.
+ * MODE LOCAL (par défaut) : le chatbot répond via des règles + des
+ * requêtes en base sur les données réelles de l'utilisateur connecté.
+ * Fonctionne hors-ligne, mais ne couvre que les questions prévues dans le code.
  *
- * MODE IA (recommandé pour les questions ouvertes) : dès qu'une clé API est
- * renseignée ci-dessous, toute question non reconnue par les règles est envoyée
- * à un modèle de langage (Claude ou GPT, au choix) qui répond intelligemment,
+ * MODE IA LOCALE (Ollama) : dès qu'Ollama est accessible à l'URL configurée
+ * ci-dessous, toute question non reconnue par les règles est envoyée
+ * au modèle local choisi (llama3, mistral, phi...) qui répond intelligemment,
  * avec une connaissance complète du fonctionnement de la plateforme.
  *
- * ---- Comment obtenir une clé ----
- * • Anthropic (Claude) : https://console.anthropic.com/  → Settings → API Keys
- * • OpenAI (GPT)       : https://platform.openai.com/api-keys
- * Les deux sont payantes à l'usage (quelques centimes par conversation), mais
- * proposent en général un petit crédit gratuit à la création du compte.
- *
- * Ne renseignez qu'UNE SEULE des deux clés ci-dessous (Anthropic est utilisée
- * en priorité si les deux sont renseignées).
+ * ---- Installer Ollama ----
+ * 1. Télécharger Ollama : https://ollama.com/download
+ * 2. Installer et lancer le service
+ * 3. Tirer un modèle : ollama pull llama3 (ou mistral, phi3, gemma2...)
+ * 4. Vérifier que Ollama écoute sur http://localhost:11434
  */
+
 // ── Chargement du fichier .env (backend/.env) ───────────────────────
 function loadEnvFile(string $path): void {
     if (!file_exists($path)) return;
@@ -30,13 +28,12 @@ function loadEnvFile(string $path): void {
     }
 }
 loadEnvFile(__DIR__ . '/../.env');
-define('ANTHROPIC_API_KEY', ''); // ex: 'sk-ant-api03-...'
-define('ANTHROPIC_MODEL', 'claude-sonnet-4-5-20250929');
 
-define('OPENAI_API_KEY', ''); // ex: 'sk-proj-...'
-define('OPENAI_MODEL', 'gpt-4o-mini');
-define('GEMINI_API_KEY', getenv('GEMINI_API_KEY') ?: '');
-define('GEMINI_MODEL', 'gemini-3.5-flash');
+// ── Configuration Ollama ─────────────────────────────────────────────
+define('OLLAMA_URL', getenv('OLLAMA_URL') ?: 'http://localhost:11434');
+define('OLLAMA_MODEL', getenv('OLLAMA_MODEL') ?: 'llama3');
+define('OLLAMA_TIMEOUT_SECONDS', 60);
+
 /**
  * Connaissance complète de l'application, transmise au modèle de langage en
  * secours pour qu'il réponde correctement même aux questions ouvertes sur le
@@ -88,3 +85,102 @@ CONSIGNES DE RÉPONSE :
 - Pour les questions générales sur le fonctionnement, les règles, ou la navigation,
   réponds directement et complètement à partir des informations ci-dessus.
 TEXTE);
+
+/**
+ * Appelle Ollama en mode chat (API native /api/chat).
+ *
+ * @param string $userMessage   Message de l'utilisateur.
+ * @param string $systemContext Contexte système décrivant l'application.
+ * @return array{ok: bool, text: ?string, error: ?string}
+ */
+function callOllamaFallback(string $userMessage, string $systemContext): array {
+    $url = rtrim(OLLAMA_URL, '/') . '/api/chat';
+
+    $payload = [
+        'model' => OLLAMA_MODEL,
+        'stream' => false,
+        'messages' => [
+            ['role' => 'system', 'content' => $systemContext],
+            ['role' => 'user', 'content' => $userMessage],
+        ],
+        'options' => [
+            'temperature' => 0.4,
+            'num_predict' => 512,
+        ],
+    ];
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
+        CURLOPT_TIMEOUT => OLLAMA_TIMEOUT_SECONDS,
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        return [
+            'ok' => false,
+            'text' => null,
+            'error' => "Erreur réseau Ollama: $curlError",
+        ];
+    }
+
+    if ($httpCode !== 200) {
+        return [
+            'ok' => false,
+            'text' => null,
+            'error' => "Ollama HTTP $httpCode: $response",
+        ];
+    }
+
+    $data = json_decode($response, true);
+    $text = $data['message']['content'] ?? null;
+
+    if ($text === null) {
+        return [
+            'ok' => false,
+            'text' => null,
+            'error' => 'Réponse Ollama vide ou format inattendu',
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'text' => trim($text),
+        'error' => null,
+    ];
+}
+
+/**
+ * Vérifie si Ollama est accessible et le modèle disponible.
+ *
+ * @return array{available: bool, models: string[]}
+ */
+function ollamaStatus(): array {
+    $url = rtrim(OLLAMA_URL, '/') . '/api/tags';
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 5,
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode !== 200 || !$response) {
+        return ['available' => false, 'models' => []];
+    }
+
+    $data = json_decode($response, true);
+    $models = array_map(fn($m) => $m['name'] ?? $m['model'] ?? 'inconnu', $data['models'] ?? []);
+
+    return ['available' => true, 'models' => $models];
+}

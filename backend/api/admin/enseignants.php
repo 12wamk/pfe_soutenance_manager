@@ -20,7 +20,7 @@ if ($method === 'GET') {
 
     // v1.7 : ajustement_rapporteur / ajustement_president ajoutés à la sélection
     // pour permettre l'ajustement manuel admin de la réciprocité (voir plus bas).
-    $sql = "SELECT id, nom, prenom, email, role, grade, departement_id, max_soutenances_jour, is_active, ajustement_rapporteur, ajustement_president FROM users WHERE role IN ($placeholders) AND is_active = 1";
+    $sql = "SELECT id, nom, prenom, email, role, grade, departement_id, max_soutenances_jour, is_active, ajustement_rapporteur, ajustement_president, expertises, enseignements, domaines_recherche, bio_courte FROM users WHERE role IN ($placeholders) AND is_active = 1";
     $params = $rolesAutorises;
     // Un chef de département ne voit JAMAIS les enseignants hors de son département,
     // quel que soit le filtre demandé (règle stricte, cohérente avec soutenances/étudiants).
@@ -151,8 +151,14 @@ if ($method === 'POST') {
     $password = $motDePasseFourni ? $d['password'] : bin2hex(random_bytes(4));
     $hash = password_hash($password, PASSWORD_DEFAULT);
 
-    $stmt = $pdo->prepare("INSERT INTO users (nom, prenom, email, password, role, departement_id, is_active) VALUES (?,?,?,?,?,?,1)");
-    $stmt->execute([$d['nom'], $d['prenom'], $d['email'], $hash, $d['role'] ?? 'encadrant', $d['departement_id'] ?? null]);
+    $stmt = $pdo->prepare("INSERT INTO users (nom, prenom, email, password, role, departement_id, is_active, expertises, enseignements, domaines_recherche, bio_courte) VALUES (?,?,?,?,?,?,1,?,?,?,?)");
+    $stmt->execute([
+        $d['nom'], $d['prenom'], $d['email'], $hash, $d['role'] ?? 'encadrant', $d['departement_id'] ?? null,
+        isset($d['expertises']) ? json_encode($d['expertises']) : null,
+        isset($d['enseignements']) ? json_encode($d['enseignements']) : null,
+        isset($d['domaines_recherche']) ? json_encode($d['domaines_recherche']) : null,
+        $d['bio_courte'] ?? null,
+    ]);
     $newId = $pdo->lastInsertId();
 
     $contenu = "<p>Bonjour {$d['prenom']},</p>
@@ -199,6 +205,10 @@ if ($method === 'PUT') {
     foreach ($fields as $k => $v) { if ($v !== null) { $set[] = "$k = ?"; $params[] = $v; } }
     if (!empty($d['password'])) { $set[] = "password = ?"; $params[] = password_hash($d['password'], PASSWORD_DEFAULT); }
     if (array_key_exists('max_soutenances_jour', $d)) { $set[] = "max_soutenances_jour = ?"; $params[] = $d['max_soutenances_jour'] === '' ? null : (int) $d['max_soutenances_jour']; }
+    if (isset($d['expertises'])) { $set[] = "expertises = ?"; $params[] = is_array($d['expertises']) ? json_encode($d['expertises']) : $d['expertises']; }
+    if (isset($d['enseignements'])) { $set[] = "enseignements = ?"; $params[] = is_array($d['enseignements']) ? json_encode($d['enseignements']) : $d['enseignements']; }
+    if (isset($d['domaines_recherche'])) { $set[] = "domaines_recherche = ?"; $params[] = is_array($d['domaines_recherche']) ? json_encode($d['domaines_recherche']) : $d['domaines_recherche']; }
+    if (isset($d['bio_courte'])) { $set[] = "bio_courte = ?"; $params[] = $d['bio_courte']; }
     $params[] = $id;
 
     $stmt = $pdo->prepare("UPDATE users SET " . implode(', ', $set) . " WHERE id = ?");

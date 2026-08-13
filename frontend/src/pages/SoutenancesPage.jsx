@@ -6,6 +6,7 @@ import { adminApi, soutenancesApi, departementsApi, juryApi } from '../services/
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import OptimiserPlanningButton from '../components/OptimiserPlanningButton';
+import AutoPlanningButton from '../components/AutoPlanningButton';
 import {
   Plus, Calendar, CheckCircle, XCircle, Clock, MapPin, FileText,
   Download, FileSpreadsheet, Search, RotateCcw, AlertCircle, Ban, Sparkles, Users, CalendarClock, Pencil
@@ -338,8 +339,9 @@ export default function SoutenancesPage() {
       </div>
 
       {(user?.role === 'admin' || user?.role === 'chef_dept') && (
-        <div className="mb-6">
+        <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <OptimiserPlanningButton />
+          <AutoPlanningButton />
         </div>
       )}
 

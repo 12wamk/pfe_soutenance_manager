@@ -103,7 +103,7 @@ export default function ChatbotWidget() {
                   {statut?.mode === 'ia' ? (
                     <>
                       <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
-                      Mode IA activé ({statut.provider})
+                      Mode IA • {statut.model || 'Ollama'}
                     </>
                   ) : (
                     <>

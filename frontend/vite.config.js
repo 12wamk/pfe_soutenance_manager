@@ -7,7 +7,7 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost/pfe-soutenance-manager/backend',
+        target: 'http://localhost/pfe_soutenance_manager/backend',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/api'),
       },

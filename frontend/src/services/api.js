@@ -11,7 +11,7 @@ const BASE = import.meta.env.VITE_API_BASE_URL || '';
 // pas via le proxy Vite (qui ne couvre que /api). Il faut donc l'URL complète
 // du backend pour construire un <img src>. Ajustez VITE_BACKEND_STATIC_URL dans
 // .env si votre backend n'est pas à l'emplacement XAMPP standard.
-const BACKEND_STATIC_URL = import.meta.env.VITE_BACKEND_STATIC_URL || 'http://localhost/pfe-soutenance-manager/backend';
+const BACKEND_STATIC_URL = import.meta.env.VITE_BACKEND_STATIC_URL || 'http://localhost/pfe_soutenance_manager/backend';
 
 /** Construit l'URL complète d'une photo de profil à partir du chemin relatif renvoyé par l'API. */
 export function urlPhoto(photoUrl) {
@@ -52,6 +52,10 @@ export const adminApi = {
   updateEnseignant: (id, data) => client.put(`/api/admin/enseignants.php?id=${id}`, data),
   updateMaxEnseignant: (id, max) => client.put(`/api/admin/enseignants.php?id=${id}`, { max_soutenances_jour: max }),
   deleteEnseignant: (id) => client.delete(`/api/admin/enseignants.php?id=${id}`),
+
+  // v3.0 — Auto-planning IA
+  autoPlanningComplet: (etudiantIds, sauvegarder) =>
+    client.post('/api/admin/auto-planning-complet.php', { etudiant_ids: etudiantIds, sauvegarder }),
 
   getEtudiants: (params) => client.get('/api/admin/etudiants.php', { params }),
   createEtudiant: (data) => client.post('/api/admin/etudiants.php', data),

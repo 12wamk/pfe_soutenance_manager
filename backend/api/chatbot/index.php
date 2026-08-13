@@ -148,139 +148,271 @@ function repondre($message, $auth, $pdo) {
         return "Je peux vous renseigner sur :\n• vos étudiants encadrés\n• votre prochaine soutenance\n• vos invitations jury en attente\n• votre charge jury (réciprocité)\n• comment planifier une soutenance\n• vos disponibilités\n• la période et le calendrier\n• la participation inter-département\n\nPosez-moi votre question directement !";
     }
 
-    // ---- Secours : Gemini (gratuit) en premier, puis Anthropic/OpenAI si configurés ----
-    if (defined('GEMINI_API_KEY') && GEMINI_API_KEY) {
-        $reponseIA = appellerGemini($message, $auth);
-        if ($reponseIA) return $reponseIA;
-    }
-    if (ANTHROPIC_API_KEY) {
-        $reponseIA = appellerAnthropic($message, $auth);
-        if ($reponseIA) return $reponseIA;
-    } elseif (OPENAI_API_KEY) {
-        $reponseIA = appellerOpenAI($message, $auth);
-        if ($reponseIA) return $reponseIA;
+    // ---- Secours : Ollama avec RAG (IA locale + données réelles) ----
+    $donnees = recupererDonneesRAG($auth, $pdo);
+    $contexteRAG = construirePromptRAG($donnees, $auth);
+    $resultat = callOllamaFallback($message, $contexteRAG);
+    if ($resultat['ok'] && $resultat['text']) {
+        return $resultat['text'];
     }
 
-    return "Je n'ai pas encore de réponse précise pour cette question 🤔. Essayez de reformuler, ou tapez « aide » pour voir ce que je sais faire. Pour toute question spécifique, contactez l'administrateur.\n\n💡 Astuce admin : connectez une clé API (Gemini, Anthropic ou OpenAI) dans `backend/config/chatbot.php` pour que je puisse répondre à des questions plus ouvertes.";
+    // Ollama indisponible ou erreur → réponse locale par défaut
+    return "Je n'ai pas encore de réponse précise pour cette question 🤔. Essayez de reformuler, ou tapez « aide » pour voir ce que je sais faire. Pour toute question spécifique, contactez l'administrateur.\n\n💡 Astuce admin : installez Ollama (https://ollama.com) et lancez `ollama pull " . OLLAMA_MODEL . "` pour activer les réponses IA locales.";
 }
 
-/** Appel à l'API Gemini (Google AI Studio) — gratuit, essayé en priorité. */
-function appellerGemini($message, $auth) {
-    $contexte = CHATBOT_CONTEXTE_APPLICATION . "\n\nUtilisateur actuel : {$auth['prenom']} {$auth['nom']}, rôle : {$auth['role']}.";
+// ============================================================
+// RAG — Récupération et injection des données utilisateur
+// ============================================================
 
-    $payload = json_encode([
-        'system_instruction' => ['parts' => [['text' => $contexte]]],
-        'contents' => [['role' => 'user', 'parts' => [['text' => $message]]]],
-        'generationConfig' => [
-    'temperature' => 0.4,
-    'maxOutputTokens' => 1024,
-    'thinkingConfig' => ['thinkingBudget' => 0],
-],
-    ]);
+/**
+ * Récupère toutes les données pertinentes de l'utilisateur depuis la base.
+ * Ces données seront injectées dans le prompt Ollama pour que le modèle
+ * réponde UNIQUEMENT à partir de ces informations.
+ */
+function recupererDonneesRAG(array $auth, PDO $pdo): array {
+    $userId = $auth['id'];
+    $donnees = [];
 
-    $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . GEMINI_MODEL . ':generateContent?key=' . GEMINI_API_KEY;
+    // --- Profil utilisateur ---
+    $stmt = $pdo->prepare("SELECT u.*, d.nom as departement_nom FROM users u LEFT JOIN departements d ON u.departement_id = d.id WHERE u.id = ?");
+    $stmt->execute([$userId]);
+    $donnees['profil'] = $stmt->fetch() ?: null;
 
-    for ($tentative = 1; $tentative <= 2; $tentative++) {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_TIMEOUT => 15,
-        ]);
-        $result = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+    // --- Étudiants encadrés ---
+    $stmt = $pdo->prepare("SELECT id, code_etudiant, nom, prenom, niveau, option_id, titre_sujet, date_debut, date_fin FROM etudiants WHERE encadrant_id = ? ORDER BY nom");
+    $stmt->execute([$userId]);
+    $donnees['etudiants'] = $stmt->fetchAll();
 
-        if ($httpCode === 200) {
-            $data = json_decode($result, true);
-            return $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+    // --- Soutenances (à venir et passées) ---
+    $stmt = $pdo->prepare("
+        SELECT s.*, 
+            CONCAT(e.prenom, ' ', e.nom) as etudiant_nom, 
+            e2.prenom as etudiant2_prenom, e2.nom as etudiant2_nom,
+            enc.prenom as encadrant_prenom, enc.nom as encadrant_nom,
+            rap.prenom as rapporteur_prenom, rap.nom as rapporteur_nom,
+            pres.prenom as president_prenom, pres.nom as president_nom
+        FROM soutenances s 
+        JOIN etudiants e ON s.etudiant_id = e.id
+        LEFT JOIN etudiants e2 ON s.etudiant2_id = e2.id
+        LEFT JOIN users enc ON s.encadrant_id = enc.id
+        LEFT JOIN users rap ON s.rapporteur_id = rap.id
+        LEFT JOIN users pres ON s.president_id = pres.id
+        WHERE (s.encadrant_id = ? OR s.rapporteur_id = ? OR s.president_id = ?)
+        ORDER BY s.date DESC, s.heure DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$userId, $userId, $userId]);
+    $donnees['soutenances'] = $stmt->fetchAll();
+
+    // --- Invitations jury ---
+    $stmt = $pdo->prepare("
+        SELECT ij.*, s.date as soutenance_date, s.heure as soutenance_heure,
+            CONCAT(e.prenom, ' ', e.nom) as etudiant_nom
+        FROM invitations_jury ij
+        JOIN soutenances s ON ij.soutenance_id = s.id
+        JOIN etudiants e ON s.etudiant_id = e.id
+        WHERE ij.enseignant_id = ?
+        ORDER BY s.date DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$userId]);
+    $donnees['invitations'] = $stmt->fetchAll();
+
+    // --- Charge jury (réciprocité) ---
+    $stmt = $pdo->prepare("
+        SELECT
+            (SELECT COUNT(*) FROM etudiants WHERE encadrant_id = ?) AS objectif,
+            (SELECT COUNT(*) FROM invitations_jury WHERE enseignant_id = ? AND role='rapporteur' AND statut='acceptee') AS nb_rapporteur,
+            (SELECT COUNT(*) FROM invitations_jury WHERE enseignant_id = ? AND role='president' AND statut='acceptee') AS nb_president,
+            (SELECT COUNT(*) FROM invitations_jury WHERE enseignant_id = ? AND statut='en_attente') AS nb_en_attente,
+            (SELECT COUNT(*) FROM invitations_jury WHERE enseignant_id = ? AND statut='refusee') AS nb_refusees
+    ");
+    $stmt->execute([$userId, $userId, $userId, $userId, $userId]);
+    $donnees['charge_jury'] = $stmt->fetch();
+
+    // --- Disponibilités (30 prochains jours) ---
+    $stmt = $pdo->prepare("SELECT date, statut FROM disponibilites WHERE enseignant_id = ? AND date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) ORDER BY date");
+    $stmt->execute([$userId]);
+    $donnees['disponibilites'] = $stmt->fetchAll();
+
+    // --- Période active ---
+    $stmt = $pdo->query("SELECT * FROM periode ORDER BY id DESC LIMIT 1");
+    $donnees['periode'] = $stmt->fetch() ?: null;
+
+    // --- Jours du calendrier (à venir) ---
+    $stmt = $pdo->prepare("SELECT jc.* FROM jours_calendrier jc JOIN periode p ON jc.periode_id = p.id WHERE p.id = (SELECT id FROM periode ORDER BY id DESC LIMIT 1) AND jc.date >= CURDATE() AND jc.actif = 1 ORDER BY jc.date LIMIT 15");
+    $stmt->execute();
+    $donnees['jours_a_venir'] = $stmt->fetchAll();
+
+    // --- Demandes de participation inter-département ---
+    $stmt = $pdo->prepare("
+        SELECT dp.*, d.nom as departement_cible_nom 
+        FROM demandes_participation dp 
+        LEFT JOIN departements d ON dp.departement_cible_id = d.id
+        WHERE dp.enseignant_id = ?
+        ORDER BY dp.id DESC
+        LIMIT 5
+    ");
+    $stmt->execute([$userId]);
+    $donnees['participations'] = $stmt->fetchAll();
+
+    // --- Statistiques globales (si admin) ---
+    if (in_array($auth['role'], ['admin', 'chef_dept'])) {
+        $donnees['stats'] = [
+            'total_etudiants' => $pdo->query("SELECT COUNT(*) FROM etudiants")->fetchColumn(),
+            'total_soutenances' => $pdo->query("SELECT COUNT(*) FROM soutenances")->fetchColumn(),
+            'soutenances_planifiees' => $pdo->query("SELECT COUNT(*) FROM soutenances WHERE statut = 'planifiee'")->fetchColumn(),
+            'soutenances_validees' => $pdo->query("SELECT COUNT(*) FROM soutenances WHERE statut = 'validee'")->fetchColumn(),
+            'soutenances_sans_date' => $pdo->query("SELECT COUNT(*) FROM soutenances WHERE statut = 'sans_date'")->fetchColumn(),
+            'total_enseignants' => $pdo->query("SELECT COUNT(*) FROM users WHERE role != 'admin'")->fetchColumn(),
+        ];
+    }
+
+    // --- Notifications non lues ---
+    $stmt = $pdo->prepare("SELECT * FROM notifications WHERE user_id = ? AND lu = 0 ORDER BY created_at DESC LIMIT 5");
+    $stmt->execute([$userId]);
+    $donnees['notifications'] = $stmt->fetchAll();
+
+    return $donnees;
+}
+
+/**
+ * Construit le prompt RAG structuré à partir des données récupérées.
+ * Le système instruction demande explicitement de répondre UNIQUEMENT
+ * à partir des données fournies — jamais d'inventer.
+ */
+function construirePromptRAG(array $donnees, array $auth): string {
+    $profil = $donnees['profil'];
+
+    // Instruction système stricte
+    $prompt = CHATBOT_CONTEXTE_APPLICATION . "\n\n";
+    $prompt .= "═══════════════════════════════════════════════\n";
+    $prompt .= "DONNÉES RÉELLES DE L'UTILISATEUR CONNECTÉ\n";
+    $prompt .= "═══════════════════════════════════════════════\n\n";
+
+    $prompt .= "PROFIL :\n";
+    $prompt .= "- Nom : {$profil['prenom']} {$profil['nom']}\n";
+    $prompt .= "- Rôle : {$profil['role']}\n";
+    $prompt .= "- Département : " . ($profil['departement_nom'] ?? 'Non assigné') . "\n";
+    $prompt .= "- Email : {$profil['email']}\n";
+    $prompt .= "- Grade : " . ($profil['grade'] ?? 'Non spécifié') . "\n";
+    $prompt .= "- Max soutenances/jour : {$profil['max_soutenances_jour']}\n\n";
+
+    // Étudiants
+    $prompt .= "ÉTUDIENTS ENCADRÉS (" . count($donnees['etudiants']) . ") :\n";
+    if (empty($donnees['etudiants'])) {
+        $prompt .= "- Aucun étudiant encadré actuellement.\n";
+    } else {
+        foreach ($donnees['etudiants'] as $e) {
+            $prompt .= "- [{$e['code_etudiant']}] {$e['prenom']} {$e['nom']} | Niveau: {$e['niveau']} | Sujet: " . ($e['titre_sujet'] ?? 'Non défini') . "\n";
         }
+    }
+    $prompt .= "\n";
 
-        // 503 (surcharge) ou timeout : on retente une fois après une courte pause
-        if ($tentative === 1 && ($httpCode === 503 || $httpCode === 0)) {
-            error_log("Chatbot Gemini : tentative $tentative échouée (HTTP $httpCode), nouvel essai...");
-            usleep(500000); // pause de 0.5 seconde
-            continue;
+    // Soutenances
+    $prompt .= "SOUTENANCES (" . count($donnees['soutenances']) . " dernières) :\n";
+    if (empty($donnees['soutenances'])) {
+        $prompt .= "- Aucune soutenance trouvée.\n";
+    } else {
+        foreach ($donnees['soutenances'] as $s) {
+            $date = date('d/m/Y', strtotime($s['date']));
+            $heure = $s['heure'] ? substr($s['heure'], 0, 5) : 'heure non fixée';
+            $binome = $s['etudiant2_nom'] ? " (binôme avec {$s['etudiant2_prenom']} {$s['etudiant2_nom']})" : '';
+            $prompt .= "- Le $date à $heure | Étudiant: {$s['etudiant_nom']}$binome | Statut: {$s['statut']} | Salle: " . ($s['salle'] ?? 'non assignée') . "\n";
+            $prompt .= "  Encadrant: {$s['encadrant_prenom']} {$s['encadrant_nom']} | Rapporteur: " . ($s['rapporteur_nom'] ? "{$s['rapporteur_prenom']} {$s['rapporteur_nom']}" : 'non assigné') . " | Président: " . ($s['president_nom'] ? "{$s['president_prenom']} {$s['president_nom']}" : 'non assigné') . "\n";
         }
+    }
+    $prompt .= "\n";
 
-        error_log("Chatbot Gemini erreur définitive (HTTP $httpCode): $result");
-        return null;
+    // Invitations jury
+    $prompt .= "INVITATIONS JURY (" . count($donnees['invitations']) . ") :\n";
+    if (empty($donnees['invitations'])) {
+        $prompt .= "- Aucune invitation jury.\n";
+    } else {
+        foreach ($donnees['invitations'] as $inv) {
+            $date = date('d/m/Y', strtotime($inv['soutenance_date']));
+            $prompt .= "- Rôle: {$inv['role']} | Soutenance de {$inv['etudiant_nom']} le $date | Statut: {$inv['statut']} | Reçue le: " . date('d/m/Y', strtotime($inv['date_envoi'])) . "\n";
+        }
+    }
+    $prompt .= "\n";
+
+    // Charge jury
+    $cj = $donnees['charge_jury'];
+    $prompt .= "CHARGE JURY (réciprocité) :\n";
+    $prompt .= "- Objectif (basé sur étudiants encadrés) : {$cj['objectif']} fois rapporteur + {$cj['objectif']} fois président\n";
+    $prompt .= "- Actuellement : {$cj['nb_rapporteur']} fois rapporteur, {$cj['nb_president']} fois président\n";
+    $prompt .= "- Invitations en attente : {$cj['nb_en_attente']} | Refusées : {$cj['nb_refusees']}\n\n";
+
+    // Disponibilités
+    $prompt .= "DISPONIBILITÉS (30 prochains jours) :\n";
+    if (empty($donnees['disponibilites'])) {
+        $prompt .= "- Aucune disponibilité enregistrée (par défaut disponible sur les jours ouverts).\n";
+    } else {
+        $absences = array_filter($donnees['disponibilites'], fn($d) => $d['statut'] === 'absent');
+        $prompt .= "- Jours marqués absents : " . count($absences) . "\n";
+        if (count($absences) > 0) {
+            foreach ($absences as $abs) {
+                $prompt .= "  • " . date('d/m/Y', strtotime($abs['date'])) . "\n";
+            }
+        }
+    }
+    $prompt .= "\n";
+
+    // Période
+    $p = $donnees['periode'];
+    $prompt .= "PÉRIODE ACTIVE :\n";
+    if ($p) {
+        $prompt .= "- Du " . date('d/m/Y', strtotime($p['date_debut'])) . " au " . date('d/m/Y', strtotime($p['date_fin'])) . "\n";
+        $prompt .= "- Max soutenances/jour par défaut : {$p['max_par_jour']}\n";
+        $prompt .= "- Année universitaire : {$p['annee_universitaire']}\n";
+    } else {
+        $prompt .= "- Aucune période configurée.\n";
+    }
+    $prompt .= "\n";
+
+    // Jours à venir
+    $prompt .= "PROCHAINS JOURS OUVERTS (" . count($donnees['jours_a_venir']) . ") :\n";
+    foreach ($donnees['jours_a_venir'] as $j) {
+        $prompt .= "- " . date('d/m/Y', strtotime($j['date'])) . " (max {$j['max_soutenances']} soutenances)\n";
+    }
+    $prompt .= "\n";
+
+    // Participations inter-département
+    if (!empty($donnees['participations'])) {
+        $prompt .= "PARTICIPATIONS INTER-DÉPARTEMENT :\n";
+        foreach ($donnees['participations'] as $part) {
+            $prompt .= "- Département cible: {$part['departement_cible_nom']} | Rôle: {$part['role_souhaite']} | Nombre: {$part['nombre_souhaite']} | Statut: {$part['statut']}\n";
+        }
+        $prompt .= "\n";
     }
 
-    return null;
-}
-/** Appel optionnel à l'API Anthropic (Claude) via cURL natif — aucune librairie externe requise. */
-function appellerAnthropic($message, $auth) {
-    $contexte = CHATBOT_CONTEXTE_APPLICATION . "\n\nUtilisateur actuel : {$auth['prenom']} {$auth['nom']}, rôle : {$auth['role']}.";
-
-    $payload = json_encode([
-        'model' => ANTHROPIC_MODEL,
-        'max_tokens' => 500,
-        'system' => $contexte,
-        'messages' => [['role' => 'user', 'content' => $message]],
-    ]);
-
-    $ch = curl_init('https://api.anthropic.com/v1/messages');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'x-api-key: ' . ANTHROPIC_API_KEY,
-            'anthropic-version: 2023-06-01',
-        ],
-        CURLOPT_TIMEOUT => 20,
-    ]);
-    $result = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr = curl_error($ch);
-    curl_close($ch);
-
-    if ($httpCode !== 200 || !$result) {
-        error_log("Chatbot Anthropic erreur (HTTP $httpCode): " . ($curlErr ?: $result));
-        return null;
+    // Notifications
+    if (!empty($donnees['notifications'])) {
+        $prompt .= "NOTIFICATIONS NON LUES (" . count($donnees['notifications']) . ") :\n";
+        foreach ($donnees['notifications'] as $notif) {
+            $prompt .= "- [{$notif['type']}] {$notif['titre']}\n";
+        }
+        $prompt .= "\n";
     }
-    $data = json_decode($result, true);
-    return $data['content'][0]['text'] ?? null;
-}
 
-/** Alternative OpenAI (GPT), utilisée si ANTHROPIC_API_KEY est vide et OPENAI_API_KEY renseignée. */
-function appellerOpenAI($message, $auth) {
-    $contexte = CHATBOT_CONTEXTE_APPLICATION . "\n\nUtilisateur actuel : {$auth['prenom']} {$auth['nom']}, rôle : {$auth['role']}.";
-
-    $payload = json_encode([
-        'model' => OPENAI_MODEL,
-        'max_tokens' => 500,
-        'messages' => [
-            ['role' => 'system', 'content' => $contexte],
-            ['role' => 'user', 'content' => $message],
-        ],
-    ]);
-
-    $ch = curl_init('https://api.openai.com/v1/chat/completions');
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Connection: close'],
-        CURLOPT_TIMEOUT => 15,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_FRESH_CONNECT => true,
-        CURLOPT_FORBID_REUSE => true,
-    ]);
-    $result = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr = curl_error($ch);
-    curl_close($ch);
-
-    if ($httpCode !== 200 || !$result) {
-        error_log("Chatbot OpenAI erreur (HTTP $httpCode): " . ($curlErr ?: $result));
-        return null;
+    // Stats admin
+    if (isset($donnees['stats'])) {
+        $prompt .= "STATISTIQUES GLOBALES :\n";
+        $prompt .= "- Total étudiants : {$donnees['stats']['total_etudiants']}\n";
+        $prompt .= "- Total soutenances : {$donnees['stats']['total_soutenances']}\n";
+        $prompt .= "- Planifiées : {$donnees['stats']['soutenances_planifiees']} | Validées : {$donnees['stats']['soutenances_validees']} | Sans date : {$donnees['stats']['soutenances_sans_date']}\n";
+        $prompt .= "- Total enseignants : {$donnees['stats']['total_enseignants']}\n\n";
     }
-    $data = json_decode($result, true);
-    return $data['choices'][0]['message']['content'] ?? null;
+
+    // Instruction critique anti-hallucination
+    $prompt .= "═══════════════════════════════════════════════\n";
+    $prompt .= "RÈGLES ABSOLUES DE RÉPONSE :\n";
+    $prompt .= "═══════════════════════════════════════════════\n";
+    $prompt .= "1. Réponds UNIQUEMENT à partir des données ci-dessus.\n";
+    $prompt .= "2. Si une information n'est PAS dans ces données, dis clairement qu'elle n'est pas disponible — ne JAMAIS inventer.\n";
+    $prompt .= "3. Utilise les noms, dates et chiffres EXACTEMENT comme ils apparaissent.\n";
+    $prompt .= "4. Si la question ne concerne pas les données fournies, oriente l'utilisateur vers la page correspondante.\n";
+    $prompt .= "5. Réponds en français, de façon brève et factuelle.\n";
+
+    return $prompt;
 }
