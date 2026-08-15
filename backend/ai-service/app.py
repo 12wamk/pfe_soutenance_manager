@@ -15,7 +15,9 @@ Lancement: python app.py
 
 import json
 import os
+import re
 import logging
+import unicodedata
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -47,6 +49,7 @@ DB_CONFIG = {
     'password': os.getenv('DB_PASS', ''),
     'database': os.getenv('DB_NAME', 'pfe_soutenance_manager'),
     'port': int(os.getenv('DB_PORT', 3306)),
+    'charset': 'utf8mb4',
 }
 
 # Pondérations des objectifs
@@ -55,6 +58,57 @@ WEIGHT_DAYS = 0.25          # Minimiser nombre de jours
 WEIGHT_BALANCE = 0.20       # Équilibrer charge
 WEIGHT_PERTINENCE = 0.20    # Maximiser pertinence thématique
 WEIGHT_PREFERENCES = 0.05   # Respecter préférences horaires
+
+# Mots vides fréquents du texte libre (bio), ignorés lors de l'extraction des tags.
+STOPWORDS = {
+    'a', 'afin', 'ainsi', 'analyse', 'anciennement', 'applications', 'application',
+    'au', 'aussi', 'aux', 'avec', 'c', 'ce', 'cette', 'ces', 'cours', 'comme',
+    'd', 'dans', 'de', 'depuis', 'des', 'doit', 'domaine', 'domaines', 'du',
+    'encadre', 'encadrement', 'encadrer', 'en', 'entre', 'est', 'et', 'etc',
+    'experience', 'experiences', 'faire', 'faite', 'faits', 'fait', 'gestion',
+    'je', 'l', 'la', 'langage', 'langages', 'le', 'les', 'leur', 'leurs', 'lors',
+    'ma', 'm', 'me', 'mes', 'mon', 'monde', 'n', 'nous', 'notamment', 'ou', 'où',
+    'par', 'pas', 'peut', 'permettre', 'permet', 'plus', 'pour', 'projet',
+    'projets', 'que', 'qui', 'sans', 'se', 'sera', 'seront', 'ses', 'son', 'sont',
+    'sujet', 'superviser', 'supervision', 'sur', 'systeme', 'systeme', 'travaux',
+    'techniques', 'technique', 'tel', 'telle', 'the', 'and', 'of', 'to', 'in',
+    'tous', 'tout', 'toute', 'toutes', 'tres', 'un', 'une', 'utilisateur', 'via', 'vous',
+}
+
+
+def _normaliser(mot):
+    """Normalise un mot/tag : minuscules + suppression des accents (pour le matching)."""
+    mot = unicodedata.normalize('NFKD', str(mot)).encode('ascii', 'ignore').decode('ascii')
+    return mot.lower().strip()
+
+
+def _tags_etendus(iterable):
+    """
+    Étend une liste de tags : chaque tag complet + ses mots individuels
+    (découpés sur les espaces/tirets). Permet à 'big-data' de matcher 'big data'.
+    """
+    resultat = set()
+    for x in iterable:
+        norm = _normaliser(x)
+        if not norm:
+            continue
+        resultat.add(norm)
+        for m in norm.replace('-', ' ').split():
+            if len(m) >= 3:
+                resultat.add(m)
+    return resultat
+
+
+def extraire_tags_texte(texte):
+    """
+    Extrait les mots-clés significatifs d'un texte libre (ex: bio_courte).
+    Les mots courts (< 3 lettres) et les mots vides (STOPWORDS) sont ignorés.
+    """
+    if not texte:
+        return []
+    norm = _normaliser(texte)
+    mots = re.findall(r"[a-z0-9-]{3,}", norm)
+    return [m for m in mots if m not in STOPWORDS]
 
 
 # ============================================================
@@ -94,7 +148,7 @@ def fetch_data():
     # Enseignants avec expertises
     cursor.execute("""
         SELECT u.id, u.nom, u.prenom, u.role, u.expertises, u.enseignements,
-               u.domaines_recherche, u.max_soutenances_jour, u.ajustement_rapporteur,
+               u.domaines_recherche, u.bio_courte, u.max_soutenances_jour, u.ajustement_rapporteur,
                u.ajustement_president,
                (SELECT COUNT(*) FROM etudiants WHERE encadrant_id = u.id) AS nb_etudiants
         FROM users u
@@ -210,14 +264,14 @@ def calculer_pertinence(projet_mots_cles, enseignant, historique_jury=None):
     if not projet_mots_cles:
         return 0.1  # Score minimal si pas de mots-clés
 
-    # Combine toutes les expertises de l'enseignant
-    tags_enseignant = set(
-        str(x).lower() for x in
+    # Combine toutes les expertises de l'enseignant (tags structurés + texte libre bio)
+    tags_enseignant = _tags_etendus(
         (enseignant.get('expertises') or []) +
         (enseignant.get('enseignements') or []) +
         (enseignant.get('domaines_recherche') or [])
     )
-    tags_projet = set(str(m).lower() for m in projet_mots_cles)
+    tags_enseignant.update(extraire_tags_texte(enseignant.get('bio_courte')))
+    tags_projet = _tags_etendus(projet_mots_cles)
 
     if not tags_enseignant:
         return 0.1
@@ -231,7 +285,7 @@ def calculer_pertinence(projet_mots_cles, enseignant, historique_jury=None):
     if historique_jury:
         for h in historique_jury:
             if h.get('enseignant_id') == enseignant['id']:
-                common = len(tags_projet & set(str(x).lower() for x in h.get('mots_cles', [])))
+                common = len(tags_projet & set(_normaliser(x) for x in h.get('mots_cles', [])))
                 if common > 0:
                     score += 0.15
 
@@ -239,7 +293,7 @@ def calculer_pertinence(projet_mots_cles, enseignant, historique_jury=None):
     if enseignant.get('enseignements'):
         for ens in enseignant['enseignements']:
             for mot in tags_projet:
-                if mot in str(ens).lower():
+                if mot in _normaliser(ens):
                     score += 0.08
                     break
 
@@ -261,17 +315,17 @@ def detail_matching(mots_cles_projet, enseignant):
     Décompose le calcul de pertinence pour l'affichage UI : mots-clés du projet,
     expertise de l'enseignant, correspondances trouvées, cours liés et score.
     """
-    tags_enseignant = set(
-        str(x).lower() for x in
+    tags_enseignant = _tags_etendus(
         (enseignant.get('expertises') or []) +
         (enseignant.get('enseignements') or []) +
         (enseignant.get('domaines_recherche') or [])
     )
-    tags_projet = set(str(m).lower() for m in (mots_cles_projet or []))
+    tags_enseignant.update(extraire_tags_texte(enseignant.get('bio_courte')))
+    tags_projet = _tags_etendus(mots_cles_projet or [])
     correspondants = sorted(tags_projet & tags_enseignant)
     cours_correspondants = [
         str(ens) for ens in (enseignant.get('enseignements') or [])
-        if any(mot in str(ens).lower() for mot in tags_projet)
+        if any(mot in _normaliser(ens) for mot in tags_projet)
     ]
     return {
         'tags_projet': sorted(tags_projet),
@@ -1026,9 +1080,10 @@ def auto_planning_complet():
 
     resultat = solve_auto_planning(db_data, mode='complet')
 
+    # NB : la création des invitations jury + notifications + emails est faite côté
+    # proxy PHP (auto-planning-complet.php), pas ici, pour éviter les doublons.
     if sauvegarder and 'planning' in resultat:
         appliquer_planning(resultat['planning'])
-        resultat['notifications_envoyees'] = notifier_changements(resultat['planning'], db_data)
 
     return jsonify(resultat)
 

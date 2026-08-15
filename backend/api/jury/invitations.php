@@ -24,6 +24,7 @@ $baseSql = "
     SELECT i.*, s.date as date_soutenance, s.heure, s.salle, s.departement_id,
            CONCAT(e.prenom,' ',e.nom) as etudiant, e.titre_sujet,
            CONCAT(u.prenom,' ',u.nom) as enseignant_nom,
+           CONCAT(en.prenom,' ',en.nom) as encadrant_nom,
            CASE WHEN i.role = 'rapporteur' THEN s.rapporteur_id ELSE s.president_id END as titulaire_actuel_id,
            (SELECT CONCAT(t.prenom,' ',t.nom) FROM users t
               WHERE t.id = CASE WHEN i.role = 'rapporteur' THEN s.rapporteur_id ELSE s.president_id END
@@ -35,6 +36,7 @@ $baseSql = "
     JOIN soutenances s ON i.soutenance_id = s.id
     JOIN etudiants e ON s.etudiant_id = e.id
     JOIN users u ON i.enseignant_id = u.id
+    LEFT JOIN users en ON e.encadrant_id = en.id
 ";
 
 if ($vue === 'mes_invitations' || $auth['role'] === 'encadrant') {

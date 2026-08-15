@@ -43,6 +43,7 @@ export const authApi = {
   me: () => client.get('/api/auth/me.php'),
   updatePassword: (data) => client.post('/api/auth/update-password.php', data),
   updatePhoto: (formData) => client.post('/api/auth/update-photo.php', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  updateProfileExpertise: (data) => client.put('/api/auth/me.php', data),
 };
 
 export const adminApi = {

@@ -1,10 +1,47 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Layout from '../components/layout/Layout';
 import { Button, Input } from '../components/ui';
+import ExpertiseSelector from '../components/ExpertiseSelector';
 import { useAuth } from '../context/AuthContext';
 import { authApi, urlPhoto } from '../services/api';
 import toast from 'react-hot-toast';
-import { Lock, Camera, User as UserIcon, Save } from 'lucide-react';
+import { Lock, Camera, User as UserIcon, Save, GraduationCap, Plus, X } from 'lucide-react';
+
+function ChipInput({ value, onChange, placeholder, accent }) {
+  const [newTag, setNewTag] = useState('');
+  const add = () => {
+    const v = newTag.trim();
+    if (v && !value.includes(v)) onChange([...value, v]);
+    setNewTag('');
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {value.map(tag => (
+          <span key={tag} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${accent}`}>
+            {tag}
+            <button onClick={() => onChange(value.filter(t => t !== tag))} className="opacity-70 hover:opacity-100">
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={newTag}
+          onChange={(e) => setNewTag(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add())}
+          placeholder={placeholder}
+          className="flex-1 px-3 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+        <button onClick={add} className="px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700">
+          <Plus size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function ProfilPage() {
   const { user, updateUser } = useAuth();
@@ -12,7 +49,52 @@ export default function ProfilPage() {
   const [loading, setLoading] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(urlPhoto(user?.photo_url));
+  const [savingExpertise, setSavingExpertise] = useState(false);
+  const [expertise, setExpertise] = useState({
+    expertises: user?.expertises || [],
+    enseignements: user?.enseignements || [],
+    domaines_recherche: user?.domaines_recherche || [],
+    bio_courte: user?.bio_courte || '',
+  });
   const fileInputRef = useRef(null);
+
+  // Recharge le profil complet (expertises, enseignements, bio) au montage
+  useEffect(() => {
+    authApi.me()
+      .then((r) => {
+        const u = r.data.data;
+        setExpertise({
+          expertises: u.expertises || [],
+          enseignements: u.enseignements || [],
+          domaines_recherche: u.domaines_recherche || [],
+          bio_courte: u.bio_courte || '',
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveExpertise = async () => {
+    setSavingExpertise(true);
+    try {
+      await authApi.updateProfileExpertise({
+        expertises: expertise.expertises,
+        enseignements: expertise.enseignements,
+        domaines_recherche: expertise.domaines_recherche,
+        bio_courte: expertise.bio_courte,
+      });
+      updateUser({
+        expertises: expertise.expertises,
+        enseignements: expertise.enseignements,
+        domaines_recherche: expertise.domaines_recherche,
+        bio_courte: expertise.bio_courte,
+      });
+      toast.success("Description enregistrée — l'IA l'utilisera pour suggérer les jurys");
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Erreur lors de l'enregistrement");
+    } finally {
+      setSavingExpertise(false);
+    }
+  };
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -124,6 +206,58 @@ export default function ProfilPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Mon expertise & mes enseignements — alimentent l'IA de suggestion de planning */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+            <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-1 flex items-center gap-2">
+              <GraduationCap size={16} /> Mon expertise & mes enseignements
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">
+              L'intelligence artificielle s'appuie sur cette description pour suggérer les jurys et le planning (matching thématique).
+            </p>
+
+            <ExpertiseSelector
+              expertises={expertise.expertises}
+              enseignements={expertise.enseignements}
+              onChange={(patch) => setExpertise(prev => ({ ...prev, ...patch }))}
+            />
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Domaines de recherche
+              </label>
+              <p className="text-xs text-slate-500 mb-2">Thématiques de vos travaux (renforcent le matching)</p>
+              <ChipInput
+                value={expertise.domaines_recherche}
+                onChange={(v) => setExpertise(prev => ({ ...prev, domaines_recherche: v }))}
+                placeholder="Ajouter un domaine..."
+                accent="bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
+              />
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Décrivez ce que vous connaissez et ce que vous enseignez
+              </label>
+              <p className="text-xs text-slate-500 mb-2">
+                Texte libre analysé par l'IA pour la suggestion des jurys (ex : « Je supervise des projets en intelligence
+                artificielle et big data. J'enseigne les bases de données et l'algorithmique. »)
+              </p>
+              <textarea
+                value={expertise.bio_courte}
+                onChange={(e) => setExpertise(prev => ({ ...prev, bio_courte: e.target.value }))}
+                rows={4}
+                placeholder="Votre description..."
+                className="w-full px-3.5 py-2.5 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <div className="flex justify-end pt-4">
+              <Button variant="primary" icon={Save} loading={savingExpertise} onClick={saveExpertise} className="!bg-blue-600 hover:!bg-blue-700">
+                Enregistrer la description
+              </Button>
             </div>
           </div>
 

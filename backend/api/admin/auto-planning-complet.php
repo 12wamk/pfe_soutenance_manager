@@ -46,7 +46,7 @@ if ($erreur) {
 
 $resultat = json_decode($response, true);
 
-// Si sauvegarder=true et planning produit, notifier les enseignants
+// Si sauvegarder=true et planning produit, notifier les enseignants (invitations jury + emails)
 if ($sauvegarder && $http_code === 200 && !empty($resultat['planning'])) {
     $nbNotifies = notifier_planning_applique($resultat['planning']);
     $resultat['notifications_envoyees'] = $nbNotifies;
@@ -57,24 +57,77 @@ http_response_code($http_code);
 echo $response;
 
 /**
- * Notifie les enseignants des changements de planning.
+ * Notifie les enseignants des changements de planning : crée les invitations jury
+ * (invitations_jury), les notifications in-app et envoie les emails d'invitation
+ * — le tout identique au flux de planification manuelle (planifier.php).
  */
 function notifier_planning_applique(array $planning): int {
     $pdo = getDB();
-    $stmtNotif = $pdo->prepare("INSERT INTO notifications (user_id, type, titre, message, lien) VALUES (?,?,?,?,?)");
     $nb = 0;
 
+    $paramNotif = $pdo->query("SELECT delai_expiration_jours FROM parametres_notifications ORDER BY id DESC LIMIT 1")->fetch();
+    $delaiJours = $paramNotif ? (int) $paramNotif['delai_expiration_jours'] : 3;
+    $dateLimite = date('Y-m-d H:i:s', strtotime("+$delaiJours days"));
+
+    $stmtInv = $pdo->prepare("INSERT INTO invitations_jury (soutenance_id, enseignant_id, role, statut, date_envoi, date_limite) VALUES (?,?,?, 'en_attente', NOW(), ?)");
+    $stmtNotif = $pdo->prepare("INSERT INTO notifications (user_id, type, titre, message, lien) VALUES (?,?,?,?,?)");
+    $stmtEns = $pdo->prepare("SELECT email, prenom, nom FROM users WHERE id = ?");
+
     foreach ($planning as $p) {
-        $jury = array_unique(array_filter([$p['president_id'] ?? null, $p['rapporteur_id'] ?? null]));
-        foreach ($jury as $ensId) {
-            $stmtNotif->execute([
-                $ensId,
-                'info',
-                'Planning assigné automatiquement',
-                "Vous avez été désigné pour la soutenance de {$p['etudiant']} le {$p['date']} à {$p['heure_debut']} (salle {$p['salle']}).",
-                '/soutenances',
-            ]);
+        if (empty($p['id']) || empty($p['president_id']) || empty($p['rapporteur_id'])) continue;
+
+        // On nettoie d'éventuelles anciennes invitations en_attente liées (replanification)
+        $pdo->prepare("DELETE FROM invitations_jury WHERE soutenance_id = ? AND statut = 'en_attente'")->execute([$p['id']]);
+
+        $date = $p['date'] ?? '';
+        $heure = $p['heure_debut'] ?? '';
+        $salle = $p['salle'] ?? '';
+        $nomEtudiants = $p['etudiant'] ?? '';
+
+        // Invitation calendrier (.ics) si la soutenance a une date ET une heure
+        $icsInfo = null;
+        if ($date && $heure) {
+            $paramsDuree = $pdo->query("SELECT duree_soutenance FROM parametres_creneaux ORDER BY id DESC LIMIT 1")->fetch();
+            $dureeMinutes = $paramsDuree ? (int) $paramsDuree['duree_soutenance'] : 30;
+            $dtStart = new DateTime("$date $heure", new DateTimeZone('Africa/Tunis'));
+            $dtEnd = clone $dtStart;
+            $dtEnd->modify("+{$dureeMinutes} minutes");
+            $icsInfo = [
+                'uid' => 'soutenance-' . $p['id'],
+                'dtstart' => $dtStart,
+                'dtend' => $dtEnd,
+                'summary' => "Soutenance PFE — $nomEtudiants",
+                'description' => "Soutenance de $nomEtudiants",
+                'location' => $salle,
+            ];
+        }
+
+        $membres = [
+            ['id' => $p['rapporteur_id'], 'role' => 'rapporteur'],
+            ['id' => $p['president_id'], 'role' => 'président'],
+        ];
+        foreach ($membres as $m) {
+            $roleDb = $m['role'] === 'président' ? 'president' : 'rapporteur';
+
+            $stmtInv->execute([$p['id'], $m['id'], $roleDb, $dateLimite]);
+            $stmtNotif->execute([$m['id'], 'info', 'Invitation jury',
+                "Vous avez été désigné {$m['role']} pour la soutenance de $nomEtudiants"
+                . ($date ? " le " . date('d/m/Y', strtotime($date)) . ($heure ? " à " . substr($heure, 0, 5) : '') : '')
+                . ($salle ? " (salle $salle)" : '') . ".", '/invitations']);
             $nb++;
+
+            $stmtEns->execute([$m['id']]);
+            $ens = $stmtEns->fetch();
+            if (!$ens) continue;
+
+            $contenu = "<p>Bonjour {$ens['prenom']},</p>
+                <p>Vous avez été désigné <strong>{$m['role']}</strong> pour la soutenance de <strong>$nomEtudiants</strong>.</p>"
+                . ($date ? "<p><strong>Date :</strong> " . date('d/m/Y', strtotime($date)) . ($heure ? " à " . substr($heure, 0, 5) : '') . "</p>" : '')
+                . ($salle ? "<p><strong>Salle :</strong> $salle</p>" : '')
+                . ($icsInfo ? "<p>📅 Un événement a été joint à cet email pour l'ajouter directement à votre agenda.</p>" : '')
+                . "<p>Merci de vous connecter à la plateforme pour <strong>accepter ou refuser</strong> cette invitation (délai de réponse : $delaiJours jour(s)).</p>";
+            envoyerEmail($ens['email'], "{$ens['prenom']} {$ens['nom']}", 'Invitation au jury de soutenance',
+                gabaritEmail('Invitation au jury', $contenu), $icsInfo);
         }
     }
     return $nb;
