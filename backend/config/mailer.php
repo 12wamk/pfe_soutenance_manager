@@ -27,7 +27,9 @@
  * sur le même uid (ex: time()) — sinon certains clients ignorent la mise à jour.
  */
 
-define('MAIL_ENABLED', true);
+// MAIL_ENABLED peut être surchargé par la variable d'environnement (ex: Docker).
+// Valeur par défaut : true (comportement historique en local).
+define('MAIL_ENABLED', getenv('MAIL_ENABLED') !== false ? filter_var(getenv('MAIL_ENABLED'), FILTER_VALIDATE_BOOLEAN) : true);
 
 define('SMTP_HOST', 'smtp.gmail.com');
 define('SMTP_PORT', 587);           // 587 = STARTTLS (recommandé), 465 = SSL direct
@@ -263,4 +265,73 @@ function gabaritEmail($titre, $contenuHtml) {
       </div>
     </div>
     HTML;
+}
+
+/**
+ * Envoie automatiquement l'invitation calendrier (.ics) d'une soutenance à un
+ * enseignant, pour que l'événement apparaisse directement dans son agenda
+ * (Outlook, Google Calendar...). Réutilise le même uid ('soutenance-{id}') que
+ * l'invitation d'origine afin que le client mail mette à jour l'événement
+ * existant plutôt que d'en créer un doublon.
+ *
+ * Utilisée à l'acceptation d'une invitation (repondre.php / valider-expiration.php)
+ * et par l'envoi manuel depuis la page Mon Planning (envoyer-agenda.php).
+ *
+ * Ne fait rien (retourne false) si la soutenance n'a pas encore de date+heure
+ * (impossible de générer un événement calendrier).
+ *
+ * @param PDO    $pdo            Connexion DB
+ * @param int    $soutenanceId   ID de la soutenance
+ * @param int    $destinataireId ID de l'enseignant qui reçoit l'événement
+ * @param string $contexte       Rôle de l'enseignant ('rapporteur' ou 'président')
+ * @return bool true si l'email a été envoyé (ou journalisé), false sinon.
+ */
+function envoyerAgendaSoutenance($pdo, $soutenanceId, $destinataireId, $contexte = 'rapporteur') {
+    $stmt = $pdo->prepare("SELECT s.*, CONCAT(e.prenom,' ',e.nom) as etudiant, e.titre_sujet
+                           FROM soutenances s JOIN etudiants e ON s.etudiant_id = e.id WHERE s.id = ?");
+    $stmt->execute([$soutenanceId]);
+    $s = $stmt->fetch();
+    if (!$s || !$s['date'] || !$s['heure']) return false;
+
+    $stmtEns = $pdo->prepare("SELECT email, prenom, nom FROM users WHERE id = ?");
+    $stmtEns->execute([$destinataireId]);
+    $ens = $stmtEns->fetch();
+    if (!$ens) return false;
+
+    $paramsDuree = $pdo->query("SELECT duree_soutenance FROM parametres_creneaux ORDER BY id DESC LIMIT 1")->fetch();
+    $dureeMinutes = $paramsDuree ? (int) $paramsDuree['duree_soutenance'] : 30;
+
+    $dtStart = new DateTime($s['date'] . ' ' . $s['heure'], new DateTimeZone('Africa/Tunis'));
+    $dtEnd = clone $dtStart;
+    $dtEnd->modify("+{$dureeMinutes} minutes");
+
+    $nomEtudiants = $s['etudiant'];
+    if ($s['etudiant2_id']) {
+        $stmt2 = $pdo->prepare("SELECT CONCAT(prenom,' ',nom) as nom FROM etudiants WHERE id = ?");
+        $stmt2->execute([$s['etudiant2_id']]);
+        $n2 = $stmt2->fetchColumn();
+        if ($n2) $nomEtudiants .= " & $n2";
+    }
+
+    $icsInfo = [
+        'uid' => 'soutenance-' . $soutenanceId,
+        'method' => 'REQUEST',
+        'sequence' => time(),
+        'dtstart' => $dtStart,
+        'dtend' => $dtEnd,
+        'summary' => "Soutenance PFE — $nomEtudiants",
+        'description' => "Soutenance de $nomEtudiants" . ($s['titre_sujet'] ? " — {$s['titre_sujet']}" : ''),
+        'location' => $s['salle'] ?? '',
+    ];
+
+    $contenu = "<p>Bonjour {$ens['prenom']},</p>
+        <p>Vous avez accepté votre invitation de <strong>$contexte</strong> pour la soutenance de <strong>$nomEtudiants</strong>"
+        . ($s['titre_sujet'] ? " (\"{$s['titre_sujet']}\")" : '') . ".</p>"
+        . "<p><strong>Date :</strong> " . date('d/m/Y', strtotime($s['date'])) . " à " . substr($s['heure'], 0, 5) . "</p>"
+        . ($s['salle'] ? "<p><strong>Salle :</strong> {$s['salle']}</p>" : '')
+        . "<p>📅 Un événement a été joint à cet email pour l'ajouter directement à votre agenda.</p>";
+
+    return envoyerEmail($ens['email'], "{$ens['prenom']} {$ens['nom']}",
+        'Soutenance ajoutée à votre agenda',
+        gabaritEmail('Confirmation de votre participation', $contenu), $icsInfo);
 }

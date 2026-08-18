@@ -45,4 +45,12 @@ if ($nouvelleReponse === 'acceptee') {
 $pdo->prepare("UPDATE invitations_jury SET statut = ?, date_reponse = NOW(), validee_par = ? WHERE id = ?")
     ->execute([$nouvelleReponse, $auth['id'], $id]);
 
+// Comme pour une acceptation normale : on envoie l'invitation calendrier (.ics)
+// à l'enseignant pour que la soutenance apparaisse dans son agenda.
+if ($nouvelleReponse === 'acceptee') {
+    require_once __DIR__ . '/../../config/mailer.php';
+    $roleLabel = $invitation['role'] === 'rapporteur' ? 'rapporteur' : 'président';
+    envoyerAgendaSoutenance($pdo, (int) $invitation['soutenance_id'], (int) $invitation['enseignant_id'], $roleLabel);
+}
+
 ok(null, 'Expiration levée manuellement, invitation marquée comme ' . $nouvelleReponse);

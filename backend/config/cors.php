@@ -7,7 +7,10 @@
  * préflight OPTIONS du navigateur).
  */
 
-$allowedOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000'];
+$allowedOrigins = [
+    'http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000',
+    'http://localhost:8080', 'http://127.0.0.1:8080',
+];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
 if (in_array($origin, $allowedOrigins)) {
@@ -24,6 +27,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
 }
+
+// URL de base du microservice IA Flask. En local : 127.0.0.1:5001.
+// En Docker, remplacée par http://ai:5001 via la variable d'environnement.
+define('FLASK_API_URL', rtrim(getenv('FLASK_API_URL') ?: 'http://127.0.0.1:5001', '/'));
 
 require_once __DIR__ . '/database.php';
 require_once __DIR__ . '/jwt.php';

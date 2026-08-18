@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import OptimiserPlanningButton from '../components/OptimiserPlanningButton';
 import AutoPlanningButton from '../components/AutoPlanningButton';
+import PanneauExplicationIA from '../components/PanneauExplicationIA';
 import {
   Plus, Calendar, CheckCircle, XCircle, Clock, MapPin, FileText,
   Download, FileSpreadsheet, Search, RotateCcw, AlertCircle, Ban, Sparkles, Users, CalendarClock, Pencil
@@ -107,6 +108,7 @@ export default function SoutenancesPage() {
     setForm({ ...emptyForm, etudiant_id: etudiantId });
     setAvecBinome(false);
     setCreneaux([]);
+    setExplicationIA(null);
     setModal(true);
   };
 
@@ -116,7 +118,7 @@ export default function SoutenancesPage() {
     if (avecBinome && form.etudiant2_id === form.etudiant_id) { toast.error('Les deux étudiants du binôme doivent être différents'); return; }
     setSaving(true);
     try {
-      const payload = { ...form, etudiant2_id: avecBinome ? form.etudiant2_id : null };
+      const payload = { ...form, etudiant2_id: avecBinome ? form.etudiant2_id : null, explication_ia: explicationIA ? JSON.stringify(explicationIA) : undefined };
       await soutenancesApi.planifier(payload);
       toast.success('Soutenance planifiée, invitations envoyées au jury');
       setModal(false); setForm(emptyForm); setAvecBinome(false); load();
@@ -152,18 +154,23 @@ export default function SoutenancesPage() {
   };
 
   const [assignationComplete, setAssignationComplete] = useState(false);
+  const [explicationIA, setExplicationIA] = useState(null);
+  const [explicationIAEdit, setExplicationIAEdit] = useState(null);
   const handleAssignationComplete = async () => {
     if (!form.etudiant_id) { toast.error("Choisissez d'abord un étudiant"); return; }
     setAssignationComplete(true);
+    setExplicationIA(null);
     try {
-      const r = await juryApi.assignerComplet(form.etudiant_id, form.date || undefined);
-      const { date, heure, salle, rapporteur, president } = r.data.data;
-      setForm((f) => ({
-        ...f,
-        date, heure, salle,
-        rapporteur_id: String(rapporteur.id),
-        president_id: String(president.id),
-      }));
+      const data = (await juryApi.assignerComplet(form.etudiant_id, form.date || undefined)).data?.data;
+      if (!data?.rapporteur?.id || !data?.president?.id) {
+        toast.error(data?.erreur || "Aucune combinaison valide trouvée");
+        return;
+      }
+      const date = data.date, heure = data.heure, salle = data.salle;
+      const rapporteurId = String(data.rapporteur.id);
+      const presidentId = String(data.president.id);
+      setForm((f) => ({ ...f, date, heure, salle, rapporteur_id: rapporteurId, president_id: presidentId }));
+      setExplicationIA(data.expl || null);
       toast.success(`Jury, horaire et salle assignés (${format(new Date(date), 'dd MMM', { locale: fr })} à ${heure})`);
     } catch (e) { toast.error(e.response?.data?.message || "Aucune combinaison valide trouvée"); }
     finally { setAssignationComplete(false); }
@@ -197,6 +204,7 @@ export default function SoutenancesPage() {
   const openEdit = (s) => {
     if (!isAdmin) return;
     setEditSoutenance(s);
+    setExplicationIAEdit(null);
     const heureInit = s.heure ? s.heure.slice(0, 5) : '';
     setEditForm({ date: s.date || '', heure: heureInit, salle: s.salle || '', president_id: '', rapporteur_id: '' });
     setEditCreneaux([]);
@@ -224,14 +232,18 @@ export default function SoutenancesPage() {
   const handleAssignationCompleteEdit = async () => {
     if (!editSoutenance) return;
     setAssignationCompleteEdit(true);
+    setExplicationIAEdit(null);
     try {
-      const r = await juryApi.assignerComplet(editSoutenance.etudiant_id, editForm.date || undefined, editSoutenance.id);
-      const { date, heure, salle, rapporteur, president } = r.data.data;
-      setEditForm((f) => ({
-        ...f, date, heure, salle,
-        rapporteur_id: String(rapporteur.id),
-        president_id: String(president.id),
-      }));
+      const data = (await juryApi.assignerComplet(editSoutenance.etudiant_id, editForm.date || undefined, editSoutenance.id)).data?.data;
+      if (!data?.rapporteur?.id || !data?.president?.id) {
+        toast.error(data?.erreur || "Aucune combinaison valide trouvée");
+        return;
+      }
+      const date = data.date, heure = data.heure, salle = data.salle;
+      const rapporteurId = String(data.rapporteur.id);
+      const presidentId = String(data.president.id);
+      setEditForm((f) => ({ ...f, date, heure, salle, rapporteur_id: rapporteurId, president_id: presidentId }));
+      setExplicationIAEdit(data.expl || null);
       toast.success(`Jury, horaire et salle réassignés (${format(new Date(date), 'dd MMM', { locale: fr })} à ${heure})`);
     } catch (e) { toast.error(e.response?.data?.message || 'Aucune combinaison valide trouvée'); }
     finally { setAssignationCompleteEdit(false); }
@@ -253,6 +265,7 @@ export default function SoutenancesPage() {
           date: editForm.date,
           heure: editForm.heure || null,
           salle: editForm.salle || null,
+          explication_ia: explicationIAEdit ? JSON.stringify(explicationIAEdit) : undefined,
         });
       }
 
@@ -658,6 +671,7 @@ export default function SoutenancesPage() {
             </div>
           </div>
           <Input label="Salle" value={form.salle} onChange={setF('salle')} placeholder="Salle A12" />
+          {explicationIA && <PanneauExplicationIA expl={explicationIA} />}
           <div className="flex gap-3 justify-end pt-2">
             <Button variant="secondary" onClick={() => setModal(false)}>Annuler</Button>
             <Button variant="primary" onClick={handlePlanifier} loading={saving}>Planifier</Button>
@@ -757,6 +771,8 @@ export default function SoutenancesPage() {
                 <p className="text-[11px] text-slate-400">Un enseignant grisé n'est pas disponible à la date/heure choisie (créneau déjà pris, quota du jour atteint, ou indisponibilité déclarée). Choisir un nouveau nom envoie une nouvelle invitation à accepter/refuser.</p>
               </div>
             </div>
+
+            {explicationIAEdit && <PanneauExplicationIA expl={explicationIAEdit} />}
 
             <div className="flex gap-3 justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
               <Button variant="secondary" onClick={() => setEditSoutenance(null)}>Annuler</Button>

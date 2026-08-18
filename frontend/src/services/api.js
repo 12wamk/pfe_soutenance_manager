@@ -77,6 +77,8 @@ export const adminApi = {
   updateParametresNotifications: (data) => client.post('/api/admin/notifications-config.php',
      data),
       getImpactStats: () => client.get('/api/admin/impact-stats.php'),
+      // Mode développeur — réinitialise la base de données de démonstration (admin uniquement)
+      resetData: () => client.post('/api/dev/reset-data.php'),
 };
 
 export const soutenancesApi = {

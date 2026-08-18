@@ -22,7 +22,7 @@ if ($date) {
 }
 
 // Appel à l'API Flask locale (le vrai solveur OR-Tools tourne là-bas)
-$ch = curl_init("http://127.0.0.1:5001/optimiser-planning");
+$ch = curl_init(FLASK_API_URL . "/optimiser-planning");
 curl_setopt($ch, CURLOPT_POST, true);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($corpsRequete));
 curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);

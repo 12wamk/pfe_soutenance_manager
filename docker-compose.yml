@@ -1,0 +1,56 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: pfe-soutenance-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-pfe_root_2026}
+      MYSQL_DATABASE: pfe_soutenance_manager
+      MYSQL_USER: pfe
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-pfe_pass_2026}
+    volumes:
+      - ./docker/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: pfe-soutenance-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: pfe_soutenance_manager
+      DB_USER: pfe
+      DB_PASS: ${MYSQL_PASSWORD:-pfe_pass_2026}
+      MAIL_ENABLED: "false"
+      FLASK_API_URL: http://ai:5001
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+  ai:
+    build:
+      context: .
+      dockerfile: docker/ai/Dockerfile
+    container_name: pfe-soutenance-ai
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: pfe_soutenance_manager
+      DB_USER: pfe
+      DB_PASS: ${MYSQL_PASSWORD:-pfe_pass_2026}
+
+volumes:
+  db_data:

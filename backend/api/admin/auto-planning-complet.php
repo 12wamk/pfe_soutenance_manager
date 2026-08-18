@@ -25,7 +25,7 @@ $corpsRequete = [
     "etudiant_ids" => $etudiant_ids,
 ];
 
-$ch = curl_init("http://127.0.0.1:5001/auto-planning-complet");
+$ch = curl_init(FLASK_API_URL . "/auto-planning-complet");
 curl_setopt($ch, CURLOPT_POST, true);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($corpsRequete));
 curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);

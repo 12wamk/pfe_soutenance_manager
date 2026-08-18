@@ -2,8 +2,18 @@ import React, { useState } from 'react';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Eye, EyeOff, User, Lock, LogIn, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, User, Lock, LogIn, ShieldCheck, Zap } from 'lucide-react';
 import bgImage from './img/image_1e50e3d2.png';
+
+const COMPTES_DEMO = [
+  { role: 'Admin', email: 'admin@enetcom.tn', color: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100' },
+  { role: 'Chef dépt', email: 'chef@enetcom.tn', color: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100' },
+  { role: 'Encadrant', email: 'chokri.abdelmoula@enetcom.usf.tn', color: 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100' },
+  { role: 'Encadrant', email: 'mohamed.ghorbel@enetcom.usf.tn', color: 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100' },
+  { role: 'Encadrant', email: 'soufien.hajji@enetcom.usf.tn', color: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' },
+];
+
+const MDP_DEMO = 'password123';
 
 export default function LoginPage() {
   const { login, user, loading } = useAuth();
@@ -21,6 +31,20 @@ export default function LoginPage() {
     try {
       await login(form.email, form.password);
       toast.success('Connexion réussie');
+      navigate('/dashboard');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Email ou mot de passe incorrect');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const loginRapide = async (email) => {
+    setForm({ email, password: MDP_DEMO });
+    setSubmitting(true);
+    try {
+      await login(email, MDP_DEMO);
+      toast.success(`Connexion : ${email.split('@')[0]}`);
       navigate('/dashboard');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Email ou mot de passe incorrect');
@@ -110,6 +134,25 @@ export default function LoginPage() {
                 </Link>
               </p>
             </form>
+
+            <div className="mt-4 pt-4 border-t border-dashed border-slate-200">
+              <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1.5">
+                <Zap size={13} className="text-amber-500" /> Connexion rapide (démo)
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {COMPTES_DEMO.map((c) => (
+                  <button
+                    key={c.email}
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => loginRapide(c.email)}
+                    className={`px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors disabled:opacity-50 ${c.color}`}
+                  >
+                    {c.role}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="mt-6 flex items-center gap-2 text-xs text-slate-400">

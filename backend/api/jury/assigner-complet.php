@@ -18,7 +18,7 @@ $corpsRequete = ['etudiant_id' => (int) $etudiantId];
 if ($date) $corpsRequete['date'] = $date;
 if ($excludeSoutenanceId) $corpsRequete['exclude_soutenance_id'] = (int) $excludeSoutenanceId;
 
-$ch = curl_init("http://127.0.0.1:5001/assigner-complet");
+$ch = curl_init(FLASK_API_URL . "/assigner-complet");
 curl_setopt($ch, CURLOPT_POST, true);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($corpsRequete));
 curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);
@@ -36,8 +36,25 @@ if ($erreur) {
 }
 
 $resultat = json_decode($response, true);
-if ($http_code !== 200) {
-    fail($resultat['erreur'] ?? 'Erreur du service IA', $http_code);
+if ($http_code !== 200 || !empty($resultat['erreur'])) {
+    fail($resultat['erreur'] ?? 'Erreur du service IA', $http_code !== 200 ? $http_code : 422);
 }
 
-ok($resultat);
+// Normalisation du format renvoyé par Flask vers le contrat attendu par le
+// frontend : {date, heure, salle, rapporteur:{id,nom}, president:{id,nom}}.
+// Le solveur CP-SAT renvoie heure_debut / president_id / rapporteur_id ;
+// le solveur de secours peut renvoyer rapporteur/president en objets.
+// On transmet aussi l'explication complète (expl) pour afficher le score de
+// chaque membre du jury et les contraintes vérifiées.
+$s = $resultat;
+$rapporteur = $s['rapporteur'] ?? ['id' => $s['rapporteur_id'] ?? null, 'nom' => $s['rapporteur_nom'] ?? ''];
+$president  = $s['president']  ?? ['id' => $s['president_id']  ?? null, 'nom' => $s['president_nom']  ?? ''];
+
+ok([
+    'date'       => $s['date'] ?? null,
+    'heure'      => $s['heure'] ?? $s['heure_debut'] ?? null,
+    'salle'      => $s['salle'] ?? null,
+    'rapporteur' => $rapporteur,
+    'president'  => $president,
+    'expl'       => $s['expl'] ?? null,
+]);

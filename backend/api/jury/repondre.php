@@ -47,6 +47,15 @@ $validePar = $estChef && !$estConcerne ? $auth['id'] : null;
 $pdo->prepare("UPDATE invitations_jury SET statut = ?, date_reponse = NOW(), validee_par = ? WHERE id = ?")
     ->execute([$reponse, $validePar, $id]);
 
+// v1.15 : à l'acceptation, on envoie automatiquement l'invitation calendrier
+// (.ics) à l'enseignant pour que la soutenance apparaisse directement dans son
+// agenda (Outlook / Google Calendar), sans attendre un envoi manuel.
+if ($reponse === 'acceptee') {
+    require_once __DIR__ . '/../../config/mailer.php';
+    $roleLabel = $invitation['role'] === 'rapporteur' ? 'rapporteur' : 'président';
+    envoyerAgendaSoutenance($pdo, (int) $invitation['soutenance_id'], (int) $invitation['enseignant_id'], $roleLabel);
+}
+
 $msg = $reponse === 'acceptee' ? 'Invitation acceptée' : 'Invitation refusée';
 if ($validePar) $msg .= ' (au nom de l\'enseignant, par le chef de département)';
 

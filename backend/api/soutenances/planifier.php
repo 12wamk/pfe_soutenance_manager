@@ -178,8 +178,8 @@ if ($existante && in_array($existante['statut'], ['planifiee', 'validee'])) {
 }
 
 if ($existante) {
-    $stmt = $pdo->prepare("UPDATE soutenances SET etudiant_id=?, etudiant2_id=?, encadrant_id=?, rapporteur_id=?, president_id=?, date=?, heure=?, salle=?, departement_id=?, statut='planifiee', motif_refus=NULL WHERE id=?");
-    $stmt->execute([$d['etudiant_id'], $etudiant2Id, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $existante['id']]);
+    $stmt = $pdo->prepare("UPDATE soutenances SET etudiant_id=?, etudiant2_id=?, encadrant_id=?, rapporteur_id=?, president_id=?, date=?, heure=?, salle=?, departement_id=?, statut='planifiee', motif_refus=NULL, explication_ia=? WHERE id=?");
+    $stmt->execute([$d['etudiant_id'], $etudiant2Id, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $d['explication_ia'] ?? null, $existante['id']]);
     $soutenanceId = $existante['id'];
 
     // Si le binôme fusionne avec une 2e ligne "sans_date" propre à l'étudiant 2, on la supprime pour éviter un doublon
@@ -188,8 +188,8 @@ if ($existante) {
             ->execute([$etudiant2Id, $etudiant2Id, $soutenanceId]);
     }
 } else {
-    $stmt = $pdo->prepare("INSERT INTO soutenances (etudiant_id, etudiant2_id, encadrant_id, rapporteur_id, president_id, date, heure, salle, statut, departement_id) VALUES (?,?,?,?,?,?,?,?, 'planifiee', ?)");
-    $stmt->execute([$d['etudiant_id'], $etudiant2Id, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId]);
+    $stmt = $pdo->prepare("INSERT INTO soutenances (etudiant_id, etudiant2_id, encadrant_id, rapporteur_id, president_id, date, heure, salle, statut, departement_id, explication_ia) VALUES (?,?,?,?,?,?,?,?, 'planifiee', ?, ?)");
+    $stmt->execute([$d['etudiant_id'], $etudiant2Id, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $d['explication_ia'] ?? null]);
     $soutenanceId = $pdo->lastInsertId();
 
     if ($etudiant2Id) {

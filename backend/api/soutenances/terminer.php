@@ -49,7 +49,7 @@ ok([
  * Timeout court : si Flask n'est pas lancé, ça n'empêche pas le reste de fonctionner.
  */
 function declencherReentrainementIA() {
-    $ch = curl_init("http://127.0.0.1:5001/retrain-duree");
+    $ch = curl_init(FLASK_API_URL . "/retrain-duree");
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, "{}");
     curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type: application/json"]);

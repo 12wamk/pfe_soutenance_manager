@@ -10,7 +10,7 @@ if (!in_array($auth['role'], ['admin', 'chef_dept'])) {
     exit;
 }
 
-$ch = curl_init("http://127.0.0.1:5001/impact-stats");
+$ch = curl_init(FLASK_API_URL . "/impact-stats");
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_TIMEOUT, 30); // le calcul recalcule le solveur sur toutes les dates, peut prendre du temps
 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);

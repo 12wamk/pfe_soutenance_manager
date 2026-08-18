@@ -328,6 +328,7 @@ def detail_matching(mots_cles_projet, enseignant):
         if any(mot in _normaliser(ens) for mot in tags_projet)
     ]
     return {
+        'nom': f"{enseignant.get('prenom', '')} {enseignant.get('nom', '')}".strip(),
         'tags_projet': sorted(tags_projet),
         'tags_enseignant': sorted(tags_enseignant),
         'tags_correspondants': correspondants,
@@ -336,25 +337,137 @@ def detail_matching(mots_cles_projet, enseignant):
     }
 
 
-def construire_explication(s, pres, rap, etudiant, encadrant):
+# Pondération des composantes du score final d'un membre du jury (0-100).
+# Utilisée uniquement pour l'affichage explicatif (pourquoi cet enseignant).
+SCORE_PERTINENCE_POIDS = 45
+SCORE_DISPO_POIDS = 25
+SCORE_QUOTA_POIDS = 20
+SCORE_RECIPROCITE_POIDS = 10
+
+
+def _score_composante_enseignant(role, enseignant, etudiant, j_date, dispo_map,
+                                 quota_consomme_fixe, max_soutenances_jour_defaut=5):
+    """
+    Calcule le score composite (0-100) d'un enseignant pour un rôle donné dans
+    la soutenance cible, avec le détail de chaque composante.
+
+    Composantes :
+      - pertinence   (poids 45) : similarité thématique projet ↔ expertise
+      - dispo        (poids 25) : présent/absent ce jour (absent → 0)
+      - quota        (poids 20) : charge du jour vs max_soutenances_jour
+      - réciprocité  (poids 10) : ajustement rapporteur/président (sollicitation)
+    """
+    pertinence = calculer_pertinence(
+        etudiant.get('mots_cles_all') if etudiant else [], enseignant
+    ) if enseignant else 0.0
+
+    absent = bool(j_date) and dispo_map.get((enseignant['id'], j_date)) == 'absent'
+
+    max_jour = enseignant.get('max_soutenances_jour') or max_soutenances_jour_defaut
+    deja_pris = quota_consomme_fixe.get((enseignant['id'], j_date), 0) if j_date else 0
+    reste = max(0, max_jour - deja_pris)
+    quota_ok = reste > 0
+    # Note : ce rôle vient S'ajouter aux rôles déjà pris ce jour.
+    charge_finale = deja_pris + 1
+    ratio_charge = min(1.0, charge_finale / max_jour) if max_jour else 0
+    score_quota = round((1 - ratio_charge) * 100)
+
+    ajust = enseignant.get('ajustement_president' if role == 'president' else 'ajustement_rapporteur') or 0
+    # Un ajustement négatif = enseignant sous-sollicité → réciprocité élevée.
+    score_reciprocite = max(0, min(100, 100 + int(ajust) * 20))
+
+    if absent:
+        score_dispo = 0
+    else:
+        score_dispo = 100
+
+    score_total = round(
+        pertinence * 100 * (SCORE_PERTINENCE_POIDS / 100)
+        + score_dispo * (SCORE_DISPO_POIDS / 100)
+        + score_quota * (SCORE_QUOTA_POIDS / 100)
+        + score_reciprocite * (SCORE_RECIPROCITE_POIDS / 100)
+    )
+
+    return {
+        'score': score_total,
+        'composantes': {
+            'pertinence': {
+                'poids': SCORE_PERTINENCE_POIDS,
+                'valeur': round(pertinence * 100),
+                'label': 'Pertinence thématique',
+                'detail': f"{round(pertinence * 100)}% de similarité avec le projet (Jaccard).",
+            },
+            'disponibilite': {
+                'poids': SCORE_DISPO_POIDS,
+                'valeur': score_dispo,
+                'label': 'Disponibilité',
+                'detail': 'Absent ce jour — exclu' if absent else 'Disponible ce jour.',
+                'ok': not absent,
+            },
+            'quota': {
+                'poids': SCORE_QUOTA_POIDS,
+                'valeur': score_quota,
+                'label': 'Charge de la journée',
+                'detail': f"{deja_pris} rôle(s) déjà pris ce jour / max {max_jour}. "
+                          f"{'Quota atteint — exclu' if not quota_ok else 'Quota non atteint.'}",
+                'ok': quota_ok,
+            },
+            'reciprocite': {
+                'poids': SCORE_RECIPROCITE_POIDS,
+                'valeur': score_reciprocite,
+                'label': 'Réciprocité jury',
+                'detail': f"Ajustement {'président' if role == 'president' else 'rapporteur'} = {ajust:+d} "
+                          f"({('sous-sollicité' if ajust < 0 else 'sollicitation équilibrée' if ajust == 0 else 'sur-sollicité')}).",
+            },
+        },
+    }
+
+
+def construire_explication(s, pres, rap, etudiant, encadrant, j_date=None,
+                           dispo_map=None, quota_consomme_fixe=None, publications=None,
+                           enseignant_par_id=None):
     """
     Construit le détail explicatif d'une affectation IA (affiché dans l'UI avec
     un affichage/masquage) : projet, matching président/rapporteur, exclusion
-    de l'encadrant et vérification des règles métier.
+    de l'encadrant, vérification des règles métier et score composite par membre
+    du jury (pertinence + disponibilité + charge + réciprocité).
     """
     mots = etudiant.get('mots_cles_all') if etudiant else []
+    dispo_map = dispo_map or {}
+    quota_consomme_fixe = quota_consomme_fixe or {}
+
+    # Président ≠ rapporteur et encadrant exclu : vérifiés réellement.
+    pres_id = pres.get('id') if pres else None
+    rap_id = rap.get('id') if rap else None
+    encadrant_id = encadrant.get('id') if encadrant else None
+    c2_ok = pres_id != encadrant_id and rap_id != encadrant_id
+
+    score_pres = _score_composante_enseignant(
+        'president', pres, etudiant, j_date, dispo_map, quota_consomme_fixe
+    ) if pres else None
+    score_rap = _score_composante_enseignant(
+        'rapporteur', rap, etudiant, j_date, dispo_map, quota_consomme_fixe
+    ) if rap else None
+
     contraintes = [
         {
             'id': 'C1',
             'label': 'Président ≠ rapporteur',
             'detail': 'Les deux membres du jury sont des personnes distinctes.',
-            'respectee': bool(pres) and bool(rap) and pres.get('id') != rap.get('id'),
+            'respectee': bool(pres) and bool(rap) and pres_id != rap_id,
         },
         {
             'id': 'C2',
             'label': 'Encadrant exclu du jury',
             'detail': "Un encadrant ne peut pas juger son propre étudiant.",
-            'respectee': True,
+            'respectee': c2_ok,
+        },
+        {
+            'id': 'C3',
+            'label': 'Quota max par jour',
+            'detail': "Aucun membre du jury ne dépasse son quota quotidien.",
+            'respectee': bool(score_pres and score_pres['composantes']['quota']['ok'])
+                         and bool(score_rap and score_rap['composantes']['quota']['ok']),
         },
         {
             'id': 'C4',
@@ -372,7 +485,8 @@ def construire_explication(s, pres, rap, etudiant, encadrant):
             'id': 'C7',
             'label': 'Disponibilités respectées',
             'detail': "Aucun enseignant absent n'a été assigné ce jour.",
-            'respectee': True,
+            'respectee': bool(score_pres and score_pres['composantes']['disponibilite']['ok'])
+                         and bool(score_rap and score_rap['composantes']['disponibilite']['ok']),
         },
         {
             'id': 'C14',
@@ -381,18 +495,28 @@ def construire_explication(s, pres, rap, etudiant, encadrant):
             'respectee': True,
         },
     ]
+
+    president_detail = detail_matching(mots, pres) if pres else None
+    rapporteur_detail = detail_matching(mots, rap) if rap else None
+    if president_detail and score_pres:
+        president_detail['score_composite'] = score_pres
+    if rapporteur_detail and score_rap:
+        rapporteur_detail['score_composite'] = score_rap
+
     return {
         'projet': {
             'titre': etudiant.get('titre_sujet', '') if etudiant else '',
             'tags': sorted(set(str(m).lower() for m in mots)),
         },
+        'date': j_date,
         'encadrant': {
+            'id': encadrant_id,
             'nom': f"{encadrant.get('prenom', '')} {encadrant.get('nom', '')}".strip() if encadrant else '',
             'exclu_jury': True,
             'regle': "R2 — l'encadrant de l'étudiant ne peut pas être président ou rapporteur de sa propre soutenance.",
         },
-        'president': detail_matching(mots, pres) if pres else None,
-        'rapporteur': detail_matching(mots, rap) if rap else None,
+        'president': president_detail,
+        'rapporteur': rapporteur_detail,
         'contraintes': contraintes,
     }
 
@@ -401,7 +525,7 @@ def construire_explication(s, pres, rap, etudiant, encadrant):
 # SOLVEUR — AUTO-PLANNING COMPLET
 # ============================================================
 
-def solve_auto_planning(data, mode='complet', date_cible=None):
+def solve_auto_planning(data, mode='complet', date_cible=None, soutenances_fixes=None):
     """
     Résout le problème d'auto-planning.
     Utilise OR-Tools CP-SAT si disponible, sinon un solveur de secours Python pur.
@@ -410,12 +534,16 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
         data: dict avec toutes les données de la base
         mode: 'complet' (from scratch) ou 'replanifier' (améliorer existant)
         date_cible: date spécifique à optimiser (None = toutes)
+        soutenances_fixes: liste de soutenances DÉJÀ planifiées (date/heure/salle/jury
+            figés) que le solveur doit considérer comme des ressources déjà consommées
+            (salles réservées, enseignants occupés au créneau, quota déjà consommé).
+            Utilisé par l'assignation unitaire pour éviter toute double réservation.
 
     Returns:
         dict avec le planning optimisé et les statistiques
     """
     if not CP_MODEL_AVAILABLE:
-        return solve_auto_planning_fallback(data, mode, date_cible)
+        return solve_auto_planning_fallback(data, mode, date_cible, soutenances_fixes)
 
     enseignants = data['enseignants']
     etudiants = data['etudiants']
@@ -465,6 +593,68 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
     dispo_map = {}
     for d in disponibilites:
         dispo_map[(d['enseignant_id'], str(d['date']))] = d['statut']
+
+    # ============================================================
+    # SOUTENANCES FIXES (déjà planifiées) → ressources consommées
+    # Assignation unitaire : ces soutenances sont « verrouillées »
+    # (date/heure/salle/jury figés). Le solveur doit éviter toute
+    # double réservation : salle, enseignant au créneau, quota/jour.
+    # ============================================================
+    salle_occupee_fixe = {}   # (j_date, idx_créneau) -> set(salle_id)
+    ens_occupe_fixe = {}      # (j_date, idx_créneau) -> set(ens_id)  (président/rapporteur/encadrant)
+    quota_consomme_fixe = {}  # (ens_id, j_date) -> nb de rôles déjà pris
+    nb_fixes_par_jour = {}    # j_date -> nb de soutenances fixes ce jour
+
+    def _heure_en_minutes(heure):
+        if heure is None:
+            return None
+        if isinstance(heure, str):
+            parts = heure.split(':')
+            return int(parts[0]) * 60 + int(parts[1]) if len(parts) >= 2 else None
+        if hasattr(heure, 'seconds'):
+            return heure.seconds // 60
+        return None
+
+    for fs in (soutenances_fixes or []):
+        j_date = str(fs['date']) if fs.get('date') else None
+        if not j_date or j_date not in creneaux_par_jour:
+            continue
+
+        nb_fixes_par_jour[j_date] = nb_fixes_par_jour.get(j_date, 0) + 1
+
+        # Mapper l'heure de la soutenance fixe sur un créneau du modèle
+        h_mins = _heure_en_minutes(fs.get('heure'))
+        idx_creneau = None
+        for i, c in enumerate(creneaux_par_jour[j_date]):
+            if c['heure'] == fmt_heure(fs.get('heure')):
+                idx_creneau = i
+                break
+        if idx_creneau is None and h_mins is not None:
+            # Repli : créneau le plus proche parmi ceux générés
+            idx_creneau = min(
+                range(len(creneaux_par_jour[j_date])),
+                key=lambda i: abs(_heure_en_minutes(creneaux_par_jour[j_date][i]['heure'] + ':00') - h_mins)
+                if _heure_en_minutes(creneaux_par_jour[j_date][i]['heure'] + ':00') is not None else 10**9,
+            )
+
+        # Salle occupée à ce créneau
+        if idx_creneau is not None and fs.get('salle'):
+            salle_id = next((sl['id'] for sl in salles if sl.get('nom') == fs['salle']), None)
+            if salle_id is not None:
+                salle_occupee_fixe.setdefault((j_date, idx_creneau), set()).add(salle_id)
+
+        # Enseignants occupés à ce créneau (président + rapporteur + encadrant)
+        if idx_creneau is not None:
+            for role_key in ('president_id', 'rapporteur_id', 'encadrant_id'):
+                eid = fs.get(role_key)
+                if eid:
+                    ens_occupe_fixe.setdefault((j_date, idx_creneau), set()).add(eid)
+
+        # Quota consommé ce jour (président + rapporteur + encadrant)
+        for role_key in ('president_id', 'rapporteur_id', 'encadrant_id'):
+            eid = fs.get(role_key)
+            if eid:
+                quota_consomme_fixe[(eid, j_date)] = quota_consomme_fixe.get((eid, j_date), 0) + 1
 
     # Indexation rapide
     ens_by_id = {e['id']: e for e in enseignants}
@@ -541,6 +731,16 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
 
         # C1 : président ≠ rapporteur
         model.Add(president_vars[s_id] != rapporteur_vars[s_id])
+
+    # C-FIXE : la soutenance cible ne peut pas utiliser une salle déjà réservée
+    # par une soutenance fixe (double réservation impossible).
+    for (j_date, idx_creneau), salles_fixes in salle_occupee_fixe.items():
+        for salle_id in salles_fixes:
+            for s in soutenances_a_traiter:
+                s_id = s['id']
+                cle = (s_id, j_date, idx_creneau, salle_id)
+                if cle in x:
+                    model.Add(x[cle] == 0)
 
     # ============================================================
     # CONTRAINTES DURES
@@ -630,6 +830,40 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
                                 x[(s_id, j_date, c['index'], salle_id)]
                             )
 
+    # C-FIXE-ENS : à un créneau déjà occupé par une soutenance fixe, le jury cible
+    # ne peut pas inclure un enseignant déjà sur place. Et si l'encadrant de la
+    # soutenance cible est déjà occupé à ce créneau, la soutenance ne peut pas y être.
+    for (j_date, idx_creneau), ens_occupes in ens_occupe_fixe.items():
+        for s in soutenances_a_traiter:
+            s_id = s['id']
+            for salle_id in salle_ids:
+                cle = (s_id, j_date, idx_creneau, salle_id)
+                if cle not in x:
+                    continue
+                xv = x[cle]
+                for ens_id in ens_occupes:
+                    if ens_id == s.get('encadrant_id'):
+                        model.Add(xv == 0)
+                    else:
+                        model.Add(president_vars[s_id] != ens_id).OnlyEnforceIf(xv)
+                        model.Add(rapporteur_vars[s_id] != ens_id).OnlyEnforceIf(xv)
+
+    # C7-ENC : l'encadrant de la soutenance cible doit être disponible le jour choisi
+    # (absent dans disponibilites → la soutenance ne peut pas être planifiée ce jour).
+    for s in soutenances_a_traiter:
+        s_id = s['id']
+        enc_id = s.get('encadrant_id')
+        if not enc_id:
+            continue
+        for j_date in jours_ids:
+            if dispo_map.get((enc_id, j_date)) != 'absent':
+                continue
+            for c in creneaux_par_jour[j_date]:
+                for salle_id in salle_ids:
+                    cle = (s_id, j_date, c['index'], salle_id)
+                    if cle in x:
+                        model.Add(x[cle] == 0)
+
     # C3 : Quota max par jour par enseignant
     for ens in enseignants:
         ens_id = ens['id']
@@ -639,6 +873,7 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
 
         for j_date in jours_ids:
             # Compter les soutenances où cet enseignant est président/rapporteur/encadrant
+            # + les rôles déjà consommés ce jour par les soutenances fixes.
             count_vars = []
             for s in soutenances_a_traiter:
                 s_id = s['id']
@@ -666,7 +901,8 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
                     count_vars.append(enc_count)
 
             if count_vars:
-                model.Add(sum(count_vars) <= max_jour)
+                quota_deja_consomme = quota_consomme_fixe.get((ens_id, j_date), 0)
+                model.Add(sum(count_vars) + quota_deja_consomme <= max_jour)
 
     # ============================================================
     # OBJECTIFS D'OPTIMISATION
@@ -771,7 +1007,10 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
                                     'duree_min': duree_soutenance,
                                     'expl': construire_explication(
                                         s, pres, rap, etudiant,
-                                        ens_by_id.get(s.get('encadrant_id', ''), {})
+                                        ens_by_id.get(s.get('encadrant_id', ''), {}),
+                                        j_date=j_date,
+                                        dispo_map=dispo_map,
+                                        quota_consomme_fixe=quota_consomme_fixe,
                                     ),
                                 })
                                 solution_found = True
@@ -795,7 +1034,7 @@ def solve_auto_planning(data, mode='complet', date_cible=None):
         }
 
 
-def solve_auto_planning_fallback(data, mode='complet', date_cible=None):
+def solve_auto_planning_fallback(data, mode='complet', date_cible=None, soutenances_fixes=None):
     """
     Solveur de secours 100% Python (utilisé quand OR-Tools est indisponible).
 
@@ -879,6 +1118,47 @@ def solve_auto_planning_fallback(data, mode='complet', date_cible=None):
     quota_jour = {}         # (ens_id, jour) -> nb de rôles déjà assignés
     nb_sout_jour = {}       # jour -> nb de soutenances déjà planifiées
     cap_jour = {str(j['date']): j.get('max_soutenances', 5) for j in jours}
+
+    # Pré-réserver les ressources occupées par les soutenances fixes
+    # (assignation unitaire : ces créneaux/salles/enseignants sont déjà pris).
+    for fs in (soutenances_fixes or []):
+        j_date = str(fs['date']) if fs.get('date') else None
+        if not j_date or j_date not in creneaux_par_jour:
+            continue
+
+        nb_sout_jour[j_date] = nb_sout_jour.get(j_date, 0) + 1
+
+        h_mins = fs.get('heure')
+        idx_creneau = None
+        if h_mins is not None:
+            if isinstance(h_mins, str):
+                hh, mm = h_mins.split(':')[:2]
+                h_mins = int(hh) * 60 + int(mm)
+            else:
+                h_mins = h_mins.seconds // 60
+            for i, c in enumerate(creneaux_par_jour[j_date]):
+                if c['heure'] == fmt_heure(fs.get('heure')):
+                    idx_creneau = i
+                    break
+            if idx_creneau is None:
+                idx_creneau = min(
+                    range(len(creneaux_par_jour[j_date])),
+                    key=lambda i: abs(
+                        int(creneaux_par_jour[j_date][i]['heure'].split(':')[0]) * 60
+                        + int(creneaux_par_jour[j_date][i]['heure'].split(':')[1]) - h_mins
+                    ),
+                )
+
+        if idx_creneau is not None:
+            if fs.get('salle'):
+                salle_id = next((sl['id'] for sl in salles if sl.get('nom') == fs['salle']), None)
+                if salle_id is not None:
+                    salles_occupees.setdefault((j_date, idx_creneau), set()).add(salle_id)
+            for role_key in ('president_id', 'rapporteur_id', 'encadrant_id'):
+                eid = fs.get(role_key)
+                if eid:
+                    busy.add((eid, j_date, idx_creneau))
+                    quota_jour[(eid, j_date)] = quota_jour.get((eid, j_date), 0) + 1
 
     def est_occupe(ens_id, jour, idx):
         return (ens_id, jour, idx) in busy
@@ -1019,7 +1299,10 @@ def solve_auto_planning_fallback(data, mode='complet', date_cible=None):
             'duree_min': duree_soutenance,
             'expl': construire_explication(
                 s, pres, rap, etudiant,
-                ens_by_id.get(enc_id, {})
+                ens_by_id.get(enc_id, {}),
+                j_date=j_date,
+                dispo_map=dispo_map,
+                quota_consomme_fixe={},
             ),
         })
 
@@ -1110,9 +1393,15 @@ def assigner_complet():
     if not soutenance:
         return jsonify({'erreur': f'Aucune soutenance trouvée pour l\'étudiant {etudiant_id}'}), 404
 
-    # Résoudre juste pour cette soutenance
+    # Résoudre juste pour cette soutenance, mais en tenant compte des autres
+    # soutenances DÉJÀ planifiées comme ressources verrouillées (salles, créneaux,
+    # quotas) pour garantir qu'aucune double réservation n'est possible.
+    soutenances_fixes = [
+        s for s in db_data['soutenances']
+        if s['id'] != soutenance['id'] and s.get('date') and s.get('statut') != 'sans_date'
+    ]
     db_data['soutenances'] = [soutenance]
-    resultat = solve_auto_planning(db_data, mode='complet', date_cible=date_cible)
+    resultat = solve_auto_planning(db_data, mode='complet', date_cible=date_cible, soutenances_fixes=soutenances_fixes)
 
     return jsonify(resultat.get('planning', [{}])[0] if resultat.get('planning') else {'erreur': 'Pas de solution'})
 
@@ -1261,10 +1550,13 @@ def appliquer_planning(planning):
             UPDATE soutenances
             SET date = %s, heure = %s, salle = %s,
                 president_id = %s, rapporteur_id = %s,
-                statut = 'planifiee'
+                statut = 'planifiee',
+                explication_ia = %s
             WHERE id = %s
         """, (p['date'], p['heure_debut'], p['salle'],
-              p.get('president_id'), p.get('rapporteur_id'), p['id']))
+              p.get('president_id'), p.get('rapporteur_id'),
+              json.dumps(p.get('expl'), ensure_ascii=False) if p.get('expl') else None,
+              p['id']))
 
     db.commit()
     db.close()

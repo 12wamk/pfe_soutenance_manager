@@ -4,10 +4,10 @@
  * Adaptez DB_HOST / DB_NAME / DB_USER / DB_PASS à votre environnement XAMPP.
  */
 
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'pfe_soutenance_manager');
-define('DB_USER', 'root');
-define('DB_PASS', '');
+define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
+define('DB_NAME', getenv('DB_NAME') ?: 'pfe_soutenance_manager');
+define('DB_USER', getenv('DB_USER') ?: 'root');
+define('DB_PASS', getenv('DB_PASS') ?: '');
 
 function getDB() {
     try {

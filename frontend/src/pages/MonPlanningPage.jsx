@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { Calendar, MapPin, Clock, CheckCircle, XCircle, Send } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { construireLienGoogleAgenda } from '../utils/agenda';
 
 const statutConfig = {
   planifiee: { label: 'En attente', color: 'yellow', icon: Clock },
@@ -76,6 +77,20 @@ export default function MonPlanningPage() {
                     {s.salle && <div className="flex items-center gap-1"><MapPin size={11} /> {s.salle}</div>}
                   </div>
                   <Badge color={st.color}><StIcon size={11} className="inline mr-1" />{st.label}</Badge>
+                  {s.mon_invitation_statut === 'acceptee' && (
+                    <Badge color="green"><CheckCircle size={11} className="inline mr-1" />Votre participation confirmée</Badge>
+                  )}
+                  {s.date && s.heure && (
+                    <a
+                      href={construireLienGoogleAgenda(s)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#1a73e8] hover:opacity-90 transition-opacity"
+                      title="Ajouter cet événement à votre Google Agenda"
+                    >
+                      <Calendar size={13} /> Google Agenda
+                    </a>
+                  )}
                 </div>
 
                 {peutEnvoyerAgenda && (s.rapporteur || s.president) && (

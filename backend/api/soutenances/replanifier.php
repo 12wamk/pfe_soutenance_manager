@@ -100,8 +100,8 @@ $ancienneDate = $soutenance['date'];
 $ancienneHeure = $soutenance['heure'];
 $ancienneSalle = $soutenance['salle'];
 
-$pdo->prepare("UPDATE soutenances SET date = ?, heure = ?, salle = ? WHERE id = ?")
-    ->execute([$date, $heure, $salle, $soutenanceId]);
+$pdo->prepare("UPDATE soutenances SET date = ?, heure = ?, salle = ?, explication_ia = ? WHERE id = ?")
+    ->execute([$date, $heure, $salle, $d['explication_ia'] ?? null, $soutenanceId]);
 
 // Notifie le jury (et l'encadrant) du changement, sans renvoyer d'invitation à accepter/refuser
 $changement = ($ancienneDate !== $date || substr((string) $ancienneHeure, 0, 5) !== substr((string) $heure, 0, 5) || $ancienneSalle !== $salle);

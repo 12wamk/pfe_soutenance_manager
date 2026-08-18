@@ -3,10 +3,11 @@ import Layout from '../components/layout/Layout';
 import { useAuth } from '../context/AuthContext';
 import { adminApi, departementsApi } from '../services/api';
 import { Link } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import {
   Users, GraduationCap, Calendar, CheckCircle, Clock, XCircle, CalendarDays,
   Upload, Settings, ArrowRight, ClipboardList, UserCheck, BookOpen,
-  Inbox, Building2, Send, Scale, TrendingUp, AlertTriangle, MinusCircle
+  Inbox, Building2, Send, Scale, TrendingUp, AlertTriangle, MinusCircle, RotateCcw
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { format } from 'date-fns';
@@ -50,6 +51,23 @@ function ModuleCard({ to, icon: Icon, gradient, title, desc }) {
 }
 
 function AdminDashboard({ stats }) {
+  const [resetting, setResetting] = useState(false);
+
+  const handleReset = async () => {
+    if (!window.confirm('Réinitialiser TOUTES les données de démonstration ? Cette action supprime toutes les modifications actuelles.')) return;
+    if (!window.confirm('Dernière confirmation : la base sera entièrement recréée (étudiants, soutenances, invitations, notifications).')) return;
+    setResetting(true);
+    try {
+      const r = await adminApi.resetData();
+      toast.success(r.data?.message || 'Données réinitialisées');
+      setTimeout(() => window.location.reload(), 600);
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.response?.data?.error || 'Erreur pendant la réinitialisation');
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const parJourData = (stats.par_jour || []).map(d => ({
     date: format(new Date(d.date_soutenance), 'dd/MM', { locale: fr }),
     total: parseInt(d.total),
@@ -285,6 +303,32 @@ function AdminDashboard({ stats }) {
           </div>
         </div>
       )}
+
+      {/* Mode développeur — réinitialisation des données de démonstration */}
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-dashed border-amber-300 dark:border-amber-900/40 p-5 shadow-sm">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 flex-shrink-0">
+              <RotateCcw size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-800 dark:text-white">Mode développeur</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Réinitialise la base avec le jeu de données de démonstration (schema + migrations).
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={resetting}
+            onClick={handleReset}
+            className="px-4 py-2.5 rounded-lg text-xs font-semibold text-white transition-colors disabled:opacity-60 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+          >
+            {resetting ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <RotateCcw size={14} />}
+            {resetting ? 'Réinitialisation...' : 'Réinitialiser les données de démo'}
+          </button>
+        </div>
+      </div>
 
     </div>
   );
