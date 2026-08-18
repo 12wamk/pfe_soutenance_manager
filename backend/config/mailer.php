@@ -306,11 +306,15 @@ function envoyerAgendaSoutenance($pdo, $soutenanceId, $destinataireId, $contexte
     $dtEnd->modify("+{$dureeMinutes} minutes");
 
     $nomEtudiants = $s['etudiant'];
-    if ($s['etudiant2_id']) {
-        $stmt2 = $pdo->prepare("SELECT CONCAT(prenom,' ',nom) as nom FROM etudiants WHERE id = ?");
-        $stmt2->execute([$s['etudiant2_id']]);
-        $n2 = $stmt2->fetchColumn();
-        if ($n2) $nomEtudiants .= " & $n2";
+    $stmtNoms = $pdo->prepare("SELECT CONCAT(e.prenom,' ',e.nom) as nom
+        FROM soutenance_etudiants se JOIN etudiants e ON e.id = se.etudiant_id
+        WHERE se.soutenance_id = ? ORDER BY se.ordre");
+    $stmtNoms->execute([$soutenanceId]);
+    $membres = $stmtNoms->fetchAll(PDO::FETCH_COLUMN);
+    if (count($membres) > 1) {
+        $nomEtudiants = implode(' & ', $membres);
+    } elseif ($membres) {
+        $nomEtudiants = $membres[0];
     }
 
     $icsInfo = [

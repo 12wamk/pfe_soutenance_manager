@@ -270,6 +270,26 @@ ALTER TABLE soutenances ADD CONSTRAINT fk_soutenance_etudiant2
 -- Empêche qu'un même étudiant soit etudiant_id ET etudiant2_id de la même ligne
 ALTER TABLE soutenances ADD CONSTRAINT chk_binome_distinct
     CHECK (etudiant2_id IS NULL OR etudiant2_id != etudiant_id);
+
+-- ============================================================
+-- ÉVOLUTION v1.16 — table de liaison soutenance_etudiants (N étudiants)
+-- ============================================================
+-- Une soutenance peut concerner N étudiants (solo, binôme, trinôme, ...).
+-- La colonne soutenances.etudiant_id reste le membre principal (compat), mais le
+-- groupe complet se lit/écrit via cette table.
+
+CREATE TABLE IF NOT EXISTS soutenance_etudiants (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    soutenance_id INT NOT NULL,
+    etudiant_id INT NOT NULL,
+    ordre INT NOT NULL DEFAULT 1,
+    UNIQUE KEY uq_soutenance_etudiant (soutenance_id, etudiant_id),
+    KEY idx_etudiant (etudiant_id),
+    CONSTRAINT fk_se_soutenance FOREIGN KEY (soutenance_id)
+        REFERENCES soutenances(id) ON DELETE CASCADE,
+    CONSTRAINT fk_se_etudiant FOREIGN KEY (etudiant_id)
+        REFERENCES etudiants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     -- ============================================================
 -- ÉVOLUTION v1.7 — ajustement manuel de la réciprocité (admin)
 -- ============================================================

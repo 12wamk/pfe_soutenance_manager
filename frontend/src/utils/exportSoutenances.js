@@ -4,14 +4,24 @@ import { fr } from 'date-fns/locale';
 
 const statutValidationLabel = { planifiee: 'En attente', validee: 'Validée', refusee: 'Refusée', sans_date: 'Sans date' };
 
-/** Code(s) étudiant affiché(s) : "CODE1" ou "CODE1 / CODE2" si binôme. */
+/** Code(s) étudiant affiché(s) : "CODE1" ou "CODE1 / CODE2" si binôme, "… / CODE3" si trinôme. */
 function codeAffiche(s) {
+  if (Array.isArray(s.etudiants) && s.etudiants.length) return s.etudiants.map((m) => m.code_etudiant).join(' / ');
   return s.code_etudiant2 ? `${s.code_etudiant} / ${s.code_etudiant2}` : (s.code_etudiant || '');
 }
 
-/** Nom(s) étudiant(s) affiché(s) : "Nom1" ou "Nom1 & Nom2" si binôme. */
+/** Nom(s) étudiant(s) affiché(s) : "Nom1", "Nom1 & Nom2" (binôme) ou "… & Nom3" (trinôme). */
 function etudiantAffiche(s) {
+  if (Array.isArray(s.etudiants) && s.etudiants.length) return s.etudiants.map((m) => m.etudiant || m.nom).join(' & ');
+  if (Array.isArray(s.membres)) return s.membres.map((m) => m.etudiant).join(' & ');
   return s.etudiant2 ? `${s.etudiant} & ${s.etudiant2}` : (s.etudiant || '');
+}
+
+/** Nombre de membres du groupe (1 = solo, 2 = binôme, 3 = trinôme). */
+function nbMembresFiche(s) {
+  if (Array.isArray(s.etudiants) && s.etudiants.length) return s.etudiants.length;
+  if (Array.isArray(s.membres) && s.membres.length) return s.membres.length;
+  return s.etudiant2 ? 2 : 1;
 }
 
 /** Aplati une liste de soutenances (planifiées + sans date) en lignes exportables. */
@@ -114,6 +124,8 @@ export function exporterPDF(soutenances, titreListe = 'Liste des soutenances') {
 export function ouvrirFicheIndividuelle(s) {
   const nomAffiche = etudiantAffiche(s);
   const codeAff = codeAffiche(s);
+  const nb = nbMembresFiche(s);
+  const labelGroupe = nb === 3 ? 'trinôme' : nb === 2 ? 'binôme' : '';
   const html = `
     <!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Fiche soutenance — ${nomAffiche}</title>
     <style>
@@ -132,8 +144,8 @@ export function ouvrirFicheIndividuelle(s) {
       <div class="contenu">
         <div class="fiche">
           <div class="titre-sujet"><strong>Sujet :</strong> ${s.titre_sujet || 'Non renseigné'}</div>
-          <div class="ligne"><span>Code étudiant${s.code_etudiant2 ? 's (binôme)' : ''}</span><span>${codeAff || '—'}</span></div>
-          <div class="ligne"><span>Étudiant${s.etudiant2 ? 's (binôme)' : ''}</span><span>${nomAffiche}</span></div>
+          <div class="ligne"><span>Code étudiant${labelGroupe ? `s (${labelGroupe})` : ''}</span><span>${codeAff || '—'}</span></div>
+          <div class="ligne"><span>Étudiant${labelGroupe ? `s (${labelGroupe})` : ''}</span><span>${nomAffiche}</span></div>
           <div class="ligne"><span>Niveau</span><span>${s.niveau || '—'}</span></div>
           <div class="ligne"><span>Date</span><span>${s.date ? format(new Date(s.date), 'EEEE dd MMMM yyyy', { locale: fr }) : 'Non fixée'}</span></div>
           <div class="ligne"><span>Heure</span><span>${s.heure ? s.heure.substring(0, 5) : 'Non fixée'}</span></div>

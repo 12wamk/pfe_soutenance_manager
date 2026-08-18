@@ -90,10 +90,10 @@ export default function EtudiantsPage() {
   };
 
   const ouvrirFiche = (groupe) => {
-    const [e1, e2] = groupe.membres;
+    const [e1] = groupe.membres;
     ouvrirFicheIndividuelle({
+      etudiants: groupe.membres.map((e) => ({ code_etudiant: e.code_etudiant, etudiant: `${e.prenom} ${e.nom}` })),
       code_etudiant: e1.code_etudiant, etudiant: `${e1.prenom} ${e1.nom}`,
-      code_etudiant2: e2 ? e2.code_etudiant : undefined, etudiant2: e2 ? `${e2.prenom} ${e2.nom}` : undefined,
       niveau: e1.niveau, titre_sujet: e1.titre_sujet, date: e1.soutenance_date, heure: e1.soutenance_heure,
       salle: e1.salle, encadrant: e1.encadrant_nom, president: e1.president, rapporteur: e1.rapporteur,
       statut: e1.soutenance_statut,
@@ -146,11 +146,13 @@ export default function EtudiantsPage() {
               </thead>
               <tbody>
                 {lignes.map((groupe) => {
-                  const [e1, e2] = groupe.membres;
-                  const estBinome = !!e2;
+                  const membres = groupe.membres;
+                  const [e1] = membres;
+                  const estGroupe = membres.length > 1;
+                  const nb = membres.length;
                   const st = statutConfig[e1.soutenance_statut] || statutConfig.sans_date;
                   const StIcon = st.icon;
-                  const rowSpan = estBinome ? 2 : 1;
+                  const rowSpan = membres.length;
                   const cleGroupe = e1.soutenance_id || e1.id;
 
                   const celluleEtudiant = (e) => (
@@ -162,13 +164,13 @@ export default function EtudiantsPage() {
                         <div>
                           <div className="flex items-center gap-1.5">
                             <div className="font-semibold text-slate-800 dark:text-white text-sm">{e.prenom} {e.nom}</div>
-                            {estBinome && e === e1 && (
+                            {estGroupe && e === e1 && (
                               <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400">
-                                <Users size={10} /> Binôme
+                                <Users size={10} /> {nb === 3 ? 'Trinôme' : 'Binôme'}
                               </span>
                             )}
                           </div>
-                          {!estBinome && <div className="text-xs text-slate-400 max-w-[240px] truncate">{e.titre_sujet || '—'}</div>}
+                          {!estGroupe && <div className="text-xs text-slate-400 max-w-[240px] truncate">{e.titre_sujet || '—'}</div>}
                         </div>
                       </div>
                     </td>
@@ -194,7 +196,7 @@ export default function EtudiantsPage() {
                   );
 
                   // Colonnes communes (niveau, encadrant, soutenance, validation, fiche) : rendues UNE fois,
-                  // avec rowSpan=2 si binôme, à l'image des cellules Excel fusionnées du fichier source.
+                  // avec rowSpan = nombre de membres si groupe, à l'image des cellules Excel fusionnées du fichier source.
                   const cellulesCommunes = (
                     <React.Fragment key="communes">
                       <td rowSpan={rowSpan} className="px-4 py-3 border-b border-slate-100 dark:border-slate-800/60 whitespace-nowrap align-middle">
@@ -217,30 +219,16 @@ export default function EtudiantsPage() {
                     </React.Fragment>
                   );
 
-                  if (!estBinome) {
-                    return (
-                      <tr key={cleGroupe} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                        {celluleEtudiant(e1)}
-                        {celluleCode(e1)}
-                        {cellulesCommunes}
-                        {canEdit && celluleActions(e1)}
-                      </tr>
-                    );
-                  }
-
                   return (
                     <React.Fragment key={cleGroupe}>
-                      <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                        {celluleEtudiant(e1)}
-                        {celluleCode(e1)}
-                        {cellulesCommunes}
-                        {canEdit && celluleActions(e1)}
-                      </tr>
-                      <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                        {celluleEtudiant(e2)}
-                        {celluleCode(e2)}
-                        {canEdit && celluleActions(e2)}
-                      </tr>
+                      {membres.map((e, idx) => (
+                        <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                          {celluleEtudiant(e)}
+                          {celluleCode(e)}
+                          {idx === 0 && cellulesCommunes}
+                          {canEdit && celluleActions(e)}
+                        </tr>
+                      ))}
                     </React.Fragment>
                   );
                 })}

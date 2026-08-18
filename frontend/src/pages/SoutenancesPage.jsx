@@ -22,13 +22,25 @@ const statutConfig = {
   refusee: { label: 'Refusée', color: 'red', icon: XCircle },
 };
 
-const emptyForm = { etudiant_id: '', etudiant2_id: '', rapporteur_id: '', president_id: '', date: '', heure: '', salle: '' };
+const emptyForm = { etudiant_id: '', etudiant2_id: '', etudiant3_id: '', rapporteur_id: '', president_id: '', date: '', heure: '', salle: '' };
 const emptyFilters = { date: '', section: 'toutes', statutValidation: '', niveau: '', recherche: '', salle: '' };
 const emptyEditForm = { date: '', heure: '', salle: '', president_id: '', rapporteur_id: '' };
 
-/** Affiche le(s) nom(s) étudiant(s) d'une soutenance : "Nom1" ou "Nom1 & Nom2" si binôme. */
+/** Affiche le(s) nom(s) étudiant(s) d'une soutenance : "Nom1", "Nom1 & Nom2" (binôme) ou "Nom1 & Nom2 & Nom3" (trinôme). */
 function nomEtudiants(s) {
-  return s.etudiant2 ? `${s.etudiant} & ${s.etudiant2}` : s.etudiant;
+  return s.etudiant_affiche || (s.etudiant2 ? `${s.etudiant} & ${s.etudiant2}` : s.etudiant);
+}
+
+/** Codes étudiants (solo / binôme / trinôme) via la table de liaison. */
+function codesEtudiants(s) {
+  if (Array.isArray(s.etudiants) && s.etudiants.length) return s.etudiants.map((m) => m.code_etudiant).join(' / ');
+  return `${s.code_etudiant || ''}${s.code_etudiant2 ? ` / ${s.code_etudiant2}` : ''}`;
+}
+
+/** Nombre de membres du groupe (1 = solo, 2 = binôme, 3 = trinôme). */
+function nbMembres(s) {
+  if (Array.isArray(s.etudiants) && s.etudiants.length) return s.etudiants.length;
+  return s.etudiant2 ? 2 : 1;
 }
 
 export default function SoutenancesPage() {
@@ -114,11 +126,12 @@ export default function SoutenancesPage() {
 
   const handlePlanifier = async () => {
     if (!form.etudiant_id || !form.rapporteur_id || !form.president_id) { toast.error('Étudiant, rapporteur et président sont requis'); return; }
-    if (avecBinome && !form.etudiant2_id) { toast.error('Choisissez le 2e étudiant du binôme, ou décochez la case binôme'); return; }
-    if (avecBinome && form.etudiant2_id === form.etudiant_id) { toast.error('Les deux étudiants du binôme doivent être différents'); return; }
+    const etudiants = [form.etudiant_id, form.etudiant2_id, form.etudiant3_id].filter(Boolean);
+    if (avecBinome && etudiants.length < 2) { toast.error('Choisissez au moins un 2e étudiant du groupe, ou décochez la case groupe'); return; }
+    if (new Set(etudiants).size !== etudiants.length) { toast.error('Les étudiants du groupe doivent être différents'); return; }
     setSaving(true);
     try {
-      const payload = { ...form, etudiant2_id: avecBinome ? form.etudiant2_id : null, explication_ia: explicationIA ? JSON.stringify(explicationIA) : undefined };
+      const payload = { ...form, etudiants, etudiant2_id: avecBinome ? form.etudiant2_id : null, etudiant3_id: avecBinome ? form.etudiant3_id : null, explication_ia: explicationIA ? JSON.stringify(explicationIA) : undefined };
       await soutenancesApi.planifier(payload);
       toast.success('Soutenance planifiée, invitations envoyées au jury');
       setModal(false); setForm(emptyForm); setAvecBinome(false); load();
@@ -301,10 +314,10 @@ export default function SoutenancesPage() {
       if (filters.salle && !(s.salle || '').toLowerCase().includes(filters.salle.toLowerCase())) return false;
       if (filters.recherche) {
         const r = filters.recherche.toLowerCase();
-        const matchEtudiant = (s.etudiant || '').toLowerCase().includes(r);
-        const matchEtudiant2 = (s.etudiant2 || '').toLowerCase().includes(r);
+        const noms = (s.etudiant_affiche || `${s.etudiant || ''} ${s.etudiant2 || ''}`).toLowerCase();
+        const matchEtudiant = noms.includes(r);
         const matchEncadrant = (s.encadrant || '').toLowerCase().includes(r);
-        if (!matchEtudiant && !matchEtudiant2 && !matchEncadrant) return false;
+        if (!matchEtudiant && !matchEncadrant) return false;
       }
       return true;
     });
@@ -459,11 +472,11 @@ export default function SoutenancesPage() {
                                     onClick={() => openEdit(s)}
                                     className={`hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors ${isAdmin ? 'cursor-pointer' : ''}`}>
                                     <td className="px-3 py-2.5 text-xs text-slate-500 border-b border-slate-50 dark:border-slate-800/60 whitespace-nowrap">
-                                      {s.code_etudiant}{s.code_etudiant2 ? ` / ${s.code_etudiant2}` : ''}
+                                      {codesEtudiants(s)}
                                     </td>
                                     <td className="px-3 py-2.5 font-medium text-slate-800 dark:text-white border-b border-slate-50 dark:border-slate-800/60 whitespace-nowrap">
                                       <div className="flex items-center gap-1.5">
-                                        {s.etudiant2 && <Users size={13} className="text-purple-500 flex-shrink-0" titleAccess="Binôme" />}
+                                        {nbMembres(s) > 1 && <Users size={13} className="text-purple-500 flex-shrink-0" titleAccess={nbMembres(s) === 3 ? 'Trinôme' : 'Binôme'} />}
                                         {nomEtudiants(s)}
                                       </div>
                                     </td>
@@ -562,11 +575,11 @@ export default function SoutenancesPage() {
                         {sansDate.map((s) => (
                           <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                             <td className="px-3 py-2.5 text-xs text-slate-500 border-b border-slate-100 dark:border-slate-800/60 whitespace-nowrap">
-                              {s.code_etudiant}{s.code_etudiant2 ? ` / ${s.code_etudiant2}` : ''}
+                              {codesEtudiants(s)}
                             </td>
                             <td className="px-3 py-2.5 font-medium text-slate-800 dark:text-white border-b border-slate-100 dark:border-slate-800/60 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
-                                {s.etudiant2 && <Users size={13} className="text-purple-500 flex-shrink-0" titleAccess="Binôme" />}
+                                {nbMembres(s) > 1 && <Users size={13} className="text-purple-500 flex-shrink-0" titleAccess={nbMembres(s) === 3 ? 'Trinôme' : 'Binôme'} />}
                                 {nomEtudiants(s)}
                               </div>
                             </td>
@@ -609,18 +622,26 @@ export default function SoutenancesPage() {
 
           <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer select-none">
             <input type="checkbox" checked={avecBinome}
-              onChange={(e) => { setAvecBinome(e.target.checked); if (!e.target.checked) setForm((f) => ({ ...f, etudiant2_id: '' })); }}
+              onChange={(e) => { setAvecBinome(e.target.checked); if (!e.target.checked) setForm((f) => ({ ...f, etudiant2_id: '', etudiant3_id: '' })); }}
               className="rounded border-slate-300" />
-            <Users size={14} className="text-purple-500" /> Soutenance en binôme (2 étudiants)
+            <Users size={14} className="text-purple-500" /> Soutenance en groupe (binôme ou trinôme)
           </label>
 
           {avecBinome && (
-            <Select label="2e étudiant du binôme *" value={form.etudiant2_id} onChange={setF('etudiant2_id')}>
-              <option value="">— Choisir —</option>
-              {etudiants.filter((e) => String(e.id) !== String(form.etudiant_id)).map((e) => (
-                <option key={e.id} value={e.id}>{e.prenom} {e.nom} ({e.code_etudiant})</option>
-              ))}
-            </Select>
+            <div className="space-y-4">
+              <Select label="2e étudiant du groupe *" value={form.etudiant2_id} onChange={setF('etudiant2_id')}>
+                <option value="">— Choisir —</option>
+                {etudiants.filter((e) => String(e.id) !== String(form.etudiant_id)).map((e) => (
+                  <option key={e.id} value={e.id}>{e.prenom} {e.nom} ({e.code_etudiant})</option>
+                ))}
+              </Select>
+              <Select label="3e étudiant (trinôme, facultatif)" value={form.etudiant3_id} onChange={setF('etudiant3_id')}>
+                <option value="">— Aucun (binôme) —</option>
+                {etudiants.filter((e) => String(e.id) !== String(form.etudiant_id) && String(e.id) !== String(form.etudiant2_id)).map((e) => (
+                  <option key={e.id} value={e.id}>{e.prenom} {e.nom} ({e.code_etudiant})</option>
+                ))}
+              </Select>
+            </div>
           )}
 
           <button type="button" onClick={handleAssignationComplete} disabled={!form.etudiant_id || assignationComplete}

@@ -186,14 +186,15 @@ function recupererDonneesRAG(array $auth, PDO $pdo): array {
     // --- Soutenances (à venir et passées) ---
     $stmt = $pdo->prepare("
         SELECT s.*, 
-            CONCAT(e.prenom, ' ', e.nom) as etudiant_nom, 
-            e2.prenom as etudiant2_prenom, e2.nom as etudiant2_nom,
+            CONCAT(e.prenom, ' ', e.nom) as etudiant_nom,
+            (SELECT GROUP_CONCAT(CONCAT(eo.prenom, ' ', eo.nom) SEPARATOR ' & ')
+             FROM soutenance_etudiants se JOIN etudiants eo ON eo.id = se.etudiant_id
+             WHERE se.soutenance_id = s.id AND se.etudiant_id != s.etudiant_id) as autres_membres,
             enc.prenom as encadrant_prenom, enc.nom as encadrant_nom,
             rap.prenom as rapporteur_prenom, rap.nom as rapporteur_nom,
             pres.prenom as president_prenom, pres.nom as president_nom
         FROM soutenances s 
         JOIN etudiants e ON s.etudiant_id = e.id
-        LEFT JOIN etudiants e2 ON s.etudiant2_id = e2.id
         LEFT JOIN users enc ON s.encadrant_id = enc.id
         LEFT JOIN users rap ON s.rapporteur_id = rap.id
         LEFT JOIN users pres ON s.president_id = pres.id
@@ -317,8 +318,8 @@ function construirePromptRAG(array $donnees, array $auth): string {
         foreach ($donnees['soutenances'] as $s) {
             $date = date('d/m/Y', strtotime($s['date']));
             $heure = $s['heure'] ? substr($s['heure'], 0, 5) : 'heure non fixée';
-            $binome = $s['etudiant2_nom'] ? " (binôme avec {$s['etudiant2_prenom']} {$s['etudiant2_nom']})" : '';
-            $prompt .= "- Le $date à $heure | Étudiant: {$s['etudiant_nom']}$binome | Statut: {$s['statut']} | Salle: " . ($s['salle'] ?? 'non assignée') . "\n";
+            $groupe = $s['autres_membres'] ? " (en groupe avec {$s['autres_membres']})" : '';
+            $prompt .= "- Le $date à $heure | Étudiant: {$s['etudiant_nom']}$groupe | Statut: {$s['statut']} | Salle: " . ($s['salle'] ?? 'non assignée') . "\n";
             $prompt .= "  Encadrant: {$s['encadrant_prenom']} {$s['encadrant_nom']} | Rapporteur: " . ($s['rapporteur_nom'] ? "{$s['rapporteur_prenom']} {$s['rapporteur_nom']}" : 'non assigné') . " | Président: " . ($s['president_nom'] ? "{$s['president_prenom']} {$s['president_nom']}" : 'non assigné') . "\n";
         }
     }

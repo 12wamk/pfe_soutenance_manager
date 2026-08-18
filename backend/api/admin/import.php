@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../config/cors.php';
+require_once __DIR__ . '/../../config/soutenance_etudiants.php';
 
 $auth = requireRole(['admin', 'chef_dept']);
 
@@ -47,43 +48,52 @@ function deduireSpecialite($pdo, $niveau) {
 
 /** Garantit qu'une soutenance existe pour cet étudiant seul ; en crée une "sans_date" sinon. */
 function assurerSoutenanceSolo($pdo, $etudiantId, $encadrantId, $departementId) {
-    $stmt = $pdo->prepare("SELECT id FROM soutenances WHERE etudiant_id = ? OR etudiant2_id = ? LIMIT 1");
-    $stmt->execute([$etudiantId, $etudiantId]);
-    if ($stmt->fetch()) return;
+    $ids = soutenancesPourEtudiants($pdo, [$etudiantId]);
+    if ($ids) return;
     $pdo->prepare("INSERT INTO soutenances (etudiant_id, encadrant_id, departement_id, statut) VALUES (?, ?, ?, 'sans_date')")
         ->execute([$etudiantId, $encadrantId, $departementId]);
+    $sid = $pdo->lastInsertId();
+    remplacerMembresSoutenance($pdo, $sid, [$etudiantId]);
 }
 
 /**
- * Fusionne 2 étudiants en une seule soutenance binôme. Réutilise une soutenance
- * "sans_date" existante pour l'un des deux si elle existe, sinon en crée une
- * nouvelle. Ne fusionne jamais une soutenance déjà planifiee/validee/refusee
- * (signalé en erreur pour traitement manuel). Retourne un message d'erreur ou null.
+ * Fusionne N étudiants (binôme, trinôme, ...) en une seule soutenance "sans_date".
+ * Réutilise une soutenance "sans_date" existante pour l'un d'eux si elle existe,
+ * sinon en crée une nouvelle. Ne fusionne jamais une soutenance déjà
+ * planifiee/validee/refusee (signalé en erreur pour traitement manuel).
+ * Retourne un message d'erreur ou null.
  */
-function fusionnerBinome($pdo, $etudiant1Id, $etudiant2Id, $encadrantId, $departementId) {
-    $stmt = $pdo->prepare("SELECT id, statut, etudiant_id, etudiant2_id FROM soutenances WHERE etudiant_id IN (?, ?) OR etudiant2_id IN (?, ?)");
-    $stmt->execute([$etudiant1Id, $etudiant2Id, $etudiant1Id, $etudiant2Id]);
-    $existantes = $stmt->fetchAll();
+function fusionnerGroupe($pdo, array $etudiantIds, $encadrantId, $departementId) {
+    $etudiantIds = array_values(array_unique(array_map('intval', $etudiantIds)));
+    $ids = soutenancesPourEtudiants($pdo, $etudiantIds);
+    $existantes = [];
+    if ($ids) {
+        $stmt = $pdo->prepare("SELECT id, statut FROM soutenances WHERE id IN (" . implode(',', $ids) . ")");
+        $stmt->execute();
+        $existantes = $stmt->fetchAll();
+    }
 
     if (count($existantes) === 0) {
-        $pdo->prepare("INSERT INTO soutenances (etudiant_id, etudiant2_id, encadrant_id, departement_id, statut) VALUES (?, ?, ?, ?, 'sans_date')")
-            ->execute([$etudiant1Id, $etudiant2Id, $encadrantId, $departementId]);
+        $pdo->prepare("INSERT INTO soutenances (etudiant_id, encadrant_id, departement_id, statut) VALUES (?, ?, ?, 'sans_date')")
+            ->execute([$etudiantIds[0], $encadrantId, $departementId]);
+        remplacerMembresSoutenance($pdo, $pdo->lastInsertId(), $etudiantIds);
         return null;
     }
 
     foreach ($existantes as $ex) {
         if ($ex['statut'] !== 'sans_date') {
-            return "une soutenance au statut '{$ex['statut']}' existe déjà pour l'un des deux étudiants (id {$ex['id']}) — fusion automatique abandonnée, à traiter manuellement";
+            return "une soutenance au statut '{$ex['statut']}' existe déjà pour l'un des étudiants du groupe (id {$ex['id']}) — fusion automatique abandonnée, à traiter manuellement";
         }
     }
 
     $garder = $existantes[0];
-    $pdo->prepare("UPDATE soutenances SET etudiant_id = ?, etudiant2_id = ?, encadrant_id = ?, departement_id = ? WHERE id = ?")
-        ->execute([$etudiant1Id, $etudiant2Id, $encadrantId, $departementId, $garder['id']]);
+    $pdo->prepare("UPDATE soutenances SET etudiant_id = ?, encadrant_id = ?, departement_id = ? WHERE id = ?")
+        ->execute([$etudiantIds[0], $encadrantId, $departementId, $garder['id']]);
 
     for ($i = 1; $i < count($existantes); $i++) {
         $pdo->prepare("DELETE FROM soutenances WHERE id = ?")->execute([$existantes[$i]['id']]);
     }
+    remplacerMembresSoutenance($pdo, $garder['id'], $etudiantIds);
     return null;
 }
 
@@ -173,41 +183,36 @@ while (($row = fgetcsv($handle)) !== false) {
 }
 fclose($handle);
 
-// Phase 2 : regroupement par signature. Un groupe de 2 lignes partageant EXACTEMENT
-// le même niveau + sujet + dates + encadrant = un binôme (comme le fichier source
-// réel, où 2 lignes consécutives partagent ces valeurs). Un groupe de 1 = individuel.
-// Un groupe de 3+ est ambigu (coïncidence possible) : jamais fusionné automatiquement,
-// signalé pour vérification manuelle.
+// Phase 2 : regroupement par signature. Un groupe de lignes partageant EXACTEMENT
+// le même niveau + sujet + dates + encadrant = une soutenance de groupe (binôme
+// pour 2, trinôme pour 3, ...) comme le fichier source réel, où un groupe se
+// traduit par des lignes consécutives partageant ces valeurs. Un groupe de 1 =
+// individuel.
 $groupes = [];
 foreach ($etudiantsImportes as $e) {
     $groupes[$e['signature']][] = $e;
 }
 
-$nbBinomes = 0;
+$nbGroupes = 0;
 foreach ($groupes as $signature => $membres) {
     if (count($membres) === 1) {
         assurerSoutenanceSolo($pdo, $membres[0]['etudiantId'], $membres[0]['encadrantId'], $membres[0]['departementId']);
         continue;
     }
-    if (count($membres) > 2) {
-        $lignes = implode(', ', array_column($membres, 'line'));
-        $errors[] = "Lignes $lignes : " . count($membres) . " étudiants partagent exactement le même sujet/dates/encadrant — binôme ambigu (plus de 2), traités individuellement, à vérifier manuellement";
-        foreach ($membres as $m) { assurerSoutenanceSolo($pdo, $m['etudiantId'], $m['encadrantId'], $m['departementId']); }
-        continue;
-    }
 
-    // Exactement 2 -> binôme
-    [$m1, $m2] = $membres;
-    $erreurFusion = fusionnerBinome($pdo, $m1['etudiantId'], $m2['etudiantId'], $m1['encadrantId'], $m1['departementId']);
+    // 2+ étudiants partageant le même sujet/dates/encadrant -> groupe (binôme/trinôme)
+    $noms = implode("' / '", array_map(fn($m) => "{$m['prenom']} {$m['nom']}", $membres));
+    $erreurFusion = fusionnerGroupe($pdo, array_column($membres, 'etudiantId'), $membres[0]['encadrantId'], $membres[0]['departementId']);
     if ($erreurFusion) {
-        $errors[] = "Lignes {$m1['line']}, {$m2['line']} (binôme détecté '{$m1['prenom']} {$m1['nom']}' / '{$m2['prenom']} {$m2['nom']}') : $erreurFusion";
+        $lignes = implode(', ', array_column($membres, 'line'));
+        $errors[] = "Lignes $lignes (groupe de " . count($membres) . " : '$noms') : $erreurFusion";
     } else {
-        $nbBinomes++;
+        $nbGroupes++;
     }
 }
 
 ok([
     'success' => $success, 'skipped' => $updated, 'errors' => $errors,
     'sans_encadrant' => $sansEncadrant, 'sans_specialite' => $sansSpecialite, 'hors_departement' => $horsDepartement,
-    'nb_binomes' => $nbBinomes,
-], "Import terminé : $success nouveau(x), $updated mis à jour, $nbBinomes binôme(s) détecté(s), " . count($errors) . " erreur(s)");
+    'nb_binomes' => $nbGroupes,
+], "Import terminé : $success nouveau(x), $updated mis à jour, $nbGroupes groupe(s) (binôme/trinôme) détecté(s), " . count($errors) . " erreur(s)");

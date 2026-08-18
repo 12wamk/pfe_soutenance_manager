@@ -10,15 +10,15 @@ if ($method === 'GET') {
     $sql = "SELECT e.*, CONCAT(u.prenom,' ',u.nom) as encadrant_nom, o.nom as option_nom,
             s.id as soutenance_id, s.date as soutenance_date, s.heure as soutenance_heure, s.statut as soutenance_statut, s.salle,
             CONCAT(up.prenom,' ',up.nom) as president, CONCAT(ur.prenom,' ',ur.nom) as rapporteur,
-            CASE WHEN s.etudiant2_id = e.id THEN CONCAT(e1.prenom,' ',e1.nom) ELSE CONCAT(e2.prenom,' ',e2.nom) END as binome_nom
+            (SELECT GROUP_CONCAT(CONCAT(eo.prenom,' ',eo.nom) SEPARATOR ' & ')
+             FROM soutenance_etudiants seo JOIN etudiants eo ON eo.id = seo.etudiant_id
+             WHERE seo.soutenance_id = s.id AND seo.etudiant_id != e.id) as binome_nom
             FROM etudiants e
             LEFT JOIN users u ON e.encadrant_id = u.id
             LEFT JOIN options o ON e.option_id = o.id
-            LEFT JOIN soutenances s ON (s.etudiant_id = e.id OR s.etudiant2_id = e.id)
+            LEFT JOIN soutenances s ON (s.etudiant_id = e.id OR s.id IN (SELECT se.soutenance_id FROM soutenance_etudiants se WHERE se.etudiant_id = e.id))
             LEFT JOIN users up ON s.president_id = up.id
             LEFT JOIN users ur ON s.rapporteur_id = ur.id
-            LEFT JOIN etudiants e1 ON s.etudiant_id = e1.id AND s.etudiant2_id = e.id
-            LEFT JOIN etudiants e2 ON s.etudiant2_id = e2.id AND s.etudiant_id = e.id
             WHERE 1=1";
     $params = [];
     // Un encadrant ne voit que ses étudiants

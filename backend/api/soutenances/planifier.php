@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../config/cors.php';
 require_once __DIR__ . '/../../config/mailer.php';
+require_once __DIR__ . '/../../config/soutenance_etudiants.php';
 
 $auth = requireRole(['encadrant', 'admin', 'chef_dept']);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('Méthode non autorisée', 405);
@@ -9,10 +10,18 @@ $d = body();
 if (!$d['etudiant_id']) fail('Étudiant requis');
 if (!$d['rapporteur_id'] || !$d['president_id']) fail('Rapporteur et président requis');
 
-// NOUVEAU : etudiant2_id optionnel -> planification en binôme (2 étudiants, une seule soutenance)
-$etudiant2Id = !empty($d['etudiant2_id']) ? (int) $d['etudiant2_id'] : null;
-if ($etudiant2Id && $etudiant2Id === (int) $d['etudiant_id']) {
-    fail('Les deux étudiants du binôme doivent être différents');
+// Groupe d'étudiants de la soutenance (solo, binôme, trinôme, ...).
+// Le frontend envoie `etudiants` (liste ordonnée, 1er = principal) ; on garde
+// `etudiant_id` + `etudiant2_id` comme repli pour compat.
+$etudiants = $d['etudiants'] ?? [];
+if (!is_array($etudiants) || !$etudiants) {
+    $etudiants = [$d['etudiant_id'], $d['etudiant2_id'] ?? null];
+}
+$etudiants = array_values(array_unique(array_filter(array_map('intval', $etudiants))));
+$etudiantPrincipal = (int) $etudiants[0];
+$etudiant2Id = $etudiants[1] ?? null;
+if (count($etudiants) > 1 && in_array($etudiantPrincipal, array_slice($etudiants, 1))) {
+    fail('Les étudiants du groupe doivent être différents');
 }
 
 $pdo = getDB();
@@ -22,18 +31,11 @@ $encadrantId = $auth['role'] === 'encadrant' ? $auth['id'] : ($d['encadrant_id']
 // (vérifié via etudiants.encadrant_id, jamais déductible depuis le seul rôle connecté).
 if ($auth['role'] === 'encadrant') {
     $stmtProprio = $pdo->prepare("SELECT encadrant_id FROM etudiants WHERE id = ?");
-    $stmtProprio->execute([$d['etudiant_id']]);
-    $proprio = $stmtProprio->fetch();
-    if (!$proprio || (int) $proprio['encadrant_id'] !== (int) $auth['id']) {
-        fail("Vous ne pouvez planifier une soutenance que pour l'un de vos propres étudiants", 403);
-    }
-    // Même vérification pour le 2e étudiant du binôme, le cas échéant
-    if ($etudiant2Id) {
-        $stmtProprio2 = $pdo->prepare("SELECT encadrant_id FROM etudiants WHERE id = ?");
-        $stmtProprio2->execute([$etudiant2Id]);
-        $proprio2 = $stmtProprio2->fetch();
-        if (!$proprio2 || (int) $proprio2['encadrant_id'] !== (int) $auth['id']) {
-            fail("Le 2e étudiant du binôme doit aussi être l'un de vos propres étudiants", 403);
+    foreach ($etudiants as $eid) {
+        $stmtProprio->execute([$eid]);
+        $proprio = $stmtProprio->fetch();
+        if (!$proprio || (int) $proprio['encadrant_id'] !== (int) $auth['id']) {
+            fail("Vous ne pouvez planifier une soutenance que pour l'un de vos propres étudiants", 403);
         }
     }
 }
@@ -44,26 +46,28 @@ if ($auth['role'] === 'encadrant') {
 // garde toujours une trace de son encadrant.
 if (!$encadrantId) {
     $stmtEnc = $pdo->prepare("SELECT encadrant_id FROM etudiants WHERE id = ?");
-    $stmtEnc->execute([$d['etudiant_id']]);
+    $stmtEnc->execute([$etudiantPrincipal]);
     $encadrantId = $stmtEnc->fetchColumn() ?: null;
 }
 
-// Si binôme : les deux étudiants doivent partager le même encadrant (hypothèse du
+// Groupe : tous les étudiants doivent partager le même encadrant (hypothèse du
 // modèle actuel — une soutenance n'a qu'un seul encadrant_id). On le vérifie ici
-// plutôt que de silencieusement ignorer l'encadrant du 2e étudiant.
-if ($etudiant2Id) {
+// plutôt que de silencieusement ignorer l'encadrant des autres étudiants.
+if (count($etudiants) > 1 && $encadrantId) {
     $stmtEnc2 = $pdo->prepare("SELECT encadrant_id FROM etudiants WHERE id = ?");
-    $stmtEnc2->execute([$etudiant2Id]);
-    $encadrant2 = $stmtEnc2->fetchColumn();
-    if ($encadrant2 && $encadrantId && (int) $encadrant2 !== (int) $encadrantId) {
-        fail("Les deux étudiants du binôme n'ont pas le même encadrant — vérifiez leurs fiches avant de planifier ensemble");
+    foreach (array_slice($etudiants, 1) as $eid) {
+        $stmtEnc2->execute([$eid]);
+        $encadrantAutre = $stmtEnc2->fetchColumn();
+        if ($encadrantAutre && (int) $encadrantAutre !== (int) $encadrantId) {
+            fail("Les étudiants du groupe n'ont pas tous le même encadrant — vérifiez leurs fiches avant de planifier ensemble");
+        }
     }
 }
 
 // Le département de la soutenance est celui de la spécialité de l'étudiant (et non de l'utilisateur qui planifie,
 // important pour les cas où un encadrant planifie pour un étudiant d'un autre département).
 $stmtDept = $pdo->prepare("SELECT o.departement_id FROM etudiants e LEFT JOIN options o ON e.option_id = o.id WHERE e.id = ?");
-$stmtDept->execute([$d['etudiant_id']]);
+$stmtDept->execute([$etudiantPrincipal]);
 $departementSoutenanceId = $stmtDept->fetch()['departement_id'] ?? ($auth['departement_id'] ?? null);
 
 // Un chef de département ne peut planifier que pour un étudiant de son propre département
@@ -83,6 +87,11 @@ if ($encadrantId && ((int) $encadrantId === (int) $d['rapporteur_id'] || (int) $
 $date = $d['date'] ?? null;
 $heure = $d['heure'] ?? null;
 $salle = $d['salle'] ?? null;
+
+// Lignes de soutenance appartenant déjà à un membre du groupe : exclues des
+// vérifications de conflit (R4/R5/R3) pour ne pas « se confliter » avec soi-même.
+$idsGroupes = soutenancesPourEtudiants($pdo, $etudiants);
+$sqlExcl = $idsGroupes ? ' AND id NOT IN (' . implode(',', $idsGroupes) . ')' : '';
 
 if ($date) {
     // ---- R6 : la date doit être dans la période autorisée (jour actif du calendrier) ----
@@ -124,20 +133,19 @@ if ($date) {
     }
 
     // ---- R4 : pas de conflit de salle ----
-    // (on exclut la ligne existante de CE binôme, identifiée par l'un ou l'autre étudiant)
+    // (on exclut les lignes existantes du groupe)
     if ($salle) {
-        $stmt = $pdo->prepare("SELECT COUNT(*) c FROM soutenances WHERE date = ? AND heure = ? AND salle = ? AND statut != 'refusee'
-            AND etudiant_id != ? AND (etudiant2_id IS NULL OR etudiant2_id != ?)");
-        $stmt->execute([$date, $heure, $salle, $d['etudiant_id'], $d['etudiant_id']]);
+        $stmt = $pdo->prepare("SELECT COUNT(*) c FROM soutenances WHERE date = ? AND heure = ? AND salle = ? AND statut != 'refusee'$sqlExcl");
+        $stmt->execute([$date, $heure, $salle]);
         if ($stmt->fetch()['c'] > 0) fail("Conflit de salle : la salle « $salle » est déjà occupée à ce créneau (R4)");
     }
 
     // ---- R5 : pas de conflit de planning enseignant ----
     $tousLesRoles = array_filter([$encadrantId, $d['rapporteur_id'], $d['president_id']]);
     foreach ($tousLesRoles as $ensId) {
-        $stmt = $pdo->prepare("SELECT COUNT(*) c FROM soutenances WHERE date = ? AND heure = ? AND statut != 'refusee' AND etudiant_id != ?
+        $stmt = $pdo->prepare("SELECT COUNT(*) c FROM soutenances WHERE date = ? AND heure = ? AND statut != 'refusee'$sqlExcl
             AND (encadrant_id = ? OR rapporteur_id = ? OR president_id = ?)");
-        $stmt->execute([$date, $heure, $d['etudiant_id'], $ensId, $ensId, $ensId]);
+        $stmt->execute([$date, $heure, $ensId, $ensId, $ensId]);
         if ($stmt->fetch()['c'] > 0) fail("Conflit de planning : un des enseignants sélectionnés est déjà occupé à ce créneau (R5)");
     }
 
@@ -147,9 +155,9 @@ if ($date) {
     // sur les mêmes créneaux, donc pas de check global ici). ----
     $tousLesRolesQuota = array_filter([$encadrantId, $d['rapporteur_id'], $d['president_id']]);
     foreach ($tousLesRolesQuota as $ensId) {
-        $stmt = $pdo->prepare("SELECT COUNT(*) c FROM soutenances WHERE date = ? AND statut != 'refusee' AND etudiant_id != ?
+        $stmt = $pdo->prepare("SELECT COUNT(*) c FROM soutenances WHERE date = ? AND statut != 'refusee'$sqlExcl
             AND (encadrant_id = ? OR rapporteur_id = ? OR president_id = ?)");
-        $stmt->execute([$date, $d['etudiant_id'], $ensId, $ensId, $ensId]);
+        $stmt->execute([$date, $ensId, $ensId, $ensId]);
         if ($stmt->fetch()['c'] >= $jour['max_soutenances']) {
             fail("Un des enseignants sélectionnés a déjà atteint son quota de {$jour['max_soutenances']} soutenances pour cette date (R3)");
         }
@@ -157,46 +165,48 @@ if ($date) {
 }
 
 // ---- Réutilise la soutenance existante (sans_date ou refusée) plutôt que d'en créer une seconde ----
-// On recherche par etudiant_id OU etudiant2_id, pour couvrir le cas où l'étudiant
-// principal du binôme n'est pas celui qui possède déjà la ligne "sans_date".
-$stmt = $pdo->prepare("SELECT id, statut FROM soutenances WHERE etudiant_id = ? OR etudiant2_id = ? ORDER BY id DESC LIMIT 1");
-$stmt->execute([$d['etudiant_id'], $d['etudiant_id']]);
-$existante = $stmt->fetch();
+// On recherche par TOUS les membres du groupe (principal + liaison), pour couvrir
+// le cas où l'étudiant principal n'est pas celui qui possède déjà la ligne.
+$idsExistantes = soutenancesPourEtudiants($pdo, $etudiants);
+$existantes = [];
+if ($idsExistantes) {
+    $stmt = $pdo->prepare("SELECT id, statut FROM soutenances WHERE id IN (" . implode(',', $idsExistantes) . ") ORDER BY id DESC");
+    $stmt->execute();
+    $existantes = $stmt->fetchAll();
+}
 
-// Si un 2e étudiant est fourni, s'assurer qu'il n'a pas lui-même déjà une soutenance active ailleurs
-if ($etudiant2Id) {
-    $stmt2 = $pdo->prepare("SELECT id, statut FROM soutenances WHERE (etudiant_id = ? OR etudiant2_id = ?) AND id != ?");
-    $stmt2->execute([$etudiant2Id, $etudiant2Id, $existante['id'] ?? 0]);
-    $existante2 = $stmt2->fetch();
-    if ($existante2 && in_array($existante2['statut'], ['planifiee', 'validee'])) {
-        fail("Le 2e étudiant du binôme a déjà une soutenance planifiée ou validée ailleurs — impossible de le rattacher à ce binôme");
+foreach ($existantes as $ex) {
+    if (in_array($ex['statut'], ['planifiee', 'validee'])) {
+        fail('Un des étudiants du groupe a déjà une soutenance planifiée ou validée. Modifiez-la plutôt que d\'en créer une nouvelle.');
     }
 }
 
-if ($existante && in_array($existante['statut'], ['planifiee', 'validee'])) {
-    fail('Cet étudiant a déjà une soutenance planifiée ou validée. Modifiez-la plutôt que d\'en créer une nouvelle.');
-}
+$existante = $existantes[0] ?? null;
 
 if ($existante) {
-    $stmt = $pdo->prepare("UPDATE soutenances SET etudiant_id=?, etudiant2_id=?, encadrant_id=?, rapporteur_id=?, president_id=?, date=?, heure=?, salle=?, departement_id=?, statut='planifiee', motif_refus=NULL, explication_ia=? WHERE id=?");
-    $stmt->execute([$d['etudiant_id'], $etudiant2Id, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $d['explication_ia'] ?? null, $existante['id']]);
+    $stmt = $pdo->prepare("UPDATE soutenances SET etudiant_id=?, etudiant2_id=NULL, encadrant_id=?, rapporteur_id=?, president_id=?, date=?, heure=?, salle=?, departement_id=?, statut='planifiee', motif_refus=NULL, explication_ia=? WHERE id=?");
+    $stmt->execute([$etudiantPrincipal, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $d['explication_ia'] ?? null, $existante['id']]);
     $soutenanceId = $existante['id'];
 
-    // Si le binôme fusionne avec une 2e ligne "sans_date" propre à l'étudiant 2, on la supprime pour éviter un doublon
-    if ($etudiant2Id) {
-        $pdo->prepare("DELETE FROM soutenances WHERE (etudiant_id = ? OR etudiant2_id = ?) AND id != ? AND statut = 'sans_date'")
-            ->execute([$etudiant2Id, $etudiant2Id, $soutenanceId]);
+    // Supprime les lignes "sans_date" résiduelles des autres membres du groupe pour éviter un doublon
+    $autresIds = array_slice(array_column($existantes, 'id'), 1);
+    if ($autresIds) {
+        $pdo->prepare("DELETE FROM soutenances WHERE id IN (" . implode(',', $autresIds) . ") AND statut = 'sans_date'")->execute();
     }
 } else {
-    $stmt = $pdo->prepare("INSERT INTO soutenances (etudiant_id, etudiant2_id, encadrant_id, rapporteur_id, president_id, date, heure, salle, statut, departement_id, explication_ia) VALUES (?,?,?,?,?,?,?,?, 'planifiee', ?, ?)");
-    $stmt->execute([$d['etudiant_id'], $etudiant2Id, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $d['explication_ia'] ?? null]);
+    $stmt = $pdo->prepare("INSERT INTO soutenances (etudiant_id, etudiant2_id, encadrant_id, rapporteur_id, president_id, date, heure, salle, statut, departement_id, explication_ia) VALUES (?,NULL,?,?,?,?,?,?, 'planifiee', ?, ?)");
+    $stmt->execute([$etudiantPrincipal, $encadrantId, $d['rapporteur_id'], $d['president_id'], $date, $heure, $salle, $departementSoutenanceId, $d['explication_ia'] ?? null]);
     $soutenanceId = $pdo->lastInsertId();
 
-    if ($etudiant2Id) {
-        $pdo->prepare("DELETE FROM soutenances WHERE (etudiant_id = ? OR etudiant2_id = ?) AND id != ? AND statut = 'sans_date'")
-            ->execute([$etudiant2Id, $etudiant2Id, $soutenanceId]);
+    // Supprime d'éventuelles lignes "sans_date" propres aux autres membres du groupe
+    $autresIds = array_slice($idsExistantes, 0);
+    if ($autresIds) {
+        $pdo->prepare("DELETE FROM soutenances WHERE id IN (" . implode(',', $autresIds) . ") AND statut = 'sans_date'")->execute();
     }
 }
+
+// Écrit le groupe complet (1, 2, 3, ... étudiants) dans la table de liaison
+remplacerMembresSoutenance($pdo, $soutenanceId, $etudiants);
 
 // Invitations jury (on nettoie d'éventuelles anciennes invitations en_attente liées si replanification)
 $pdo->prepare("DELETE FROM invitations_jury WHERE soutenance_id = ? AND statut = 'en_attente'")->execute([$soutenanceId]);
@@ -214,17 +224,13 @@ $stmtNotif->execute([$d['rapporteur_id'], 'info', 'Invitation jury', 'Vous avez 
 $stmtNotif->execute([$d['president_id'], 'info', 'Invitation jury', 'Vous avez été désigné président pour une soutenance', '/invitations']);
 
 // Email d'invitation (en plus de la notification in-app), pour rapporteur puis président
-// Le nom affiché inclut les 2 étudiants si binôme.
+// Le nom affiché inclut tous les étudiants du groupe (solo, binôme, trinôme, ...).
 $stmtInfoEtudiant = $pdo->prepare("SELECT CONCAT(prenom,' ',nom) as etudiant, titre_sujet FROM etudiants WHERE id = ?");
-$stmtInfoEtudiant->execute([$d['etudiant_id']]);
+$stmtInfoEtudiant->execute([$etudiantPrincipal]);
 $infoEtudiant = $stmtInfoEtudiant->fetch();
-$nomEtudiants = $infoEtudiant['etudiant'];
-if ($etudiant2Id) {
-    $stmtInfoEtudiant2 = $pdo->prepare("SELECT CONCAT(prenom,' ',nom) as etudiant FROM etudiants WHERE id = ?");
-    $stmtInfoEtudiant2->execute([$etudiant2Id]);
-    $etudiant2Nom = $stmtInfoEtudiant2->fetchColumn();
-    if ($etudiant2Nom) $nomEtudiants .= " & $etudiant2Nom";
-}
+$stmtNoms = $pdo->prepare("SELECT CONCAT(e.prenom,' ',e.nom) as nom FROM soutenance_etudiants se JOIN etudiants e ON e.id = se.etudiant_id WHERE se.soutenance_id = ? ORDER BY se.ordre");
+$stmtNoms->execute([$soutenanceId]);
+$nomEtudiants = implode(' & ', $stmtNoms->fetchAll(PDO::FETCH_COLUMN));
 
 // ---- Préparation de l'invitation calendrier (.ics), si la soutenance a une date ET une heure ----
 // L'UID est basé sur l'ID de la soutenance : stable à travers les replanifications,

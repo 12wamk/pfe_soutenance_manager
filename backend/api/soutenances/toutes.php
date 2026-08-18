@@ -49,12 +49,45 @@ $stmt->execute($params);
 // TOUT consommateur de cette API (frontend, export PDF/Excel) affiche la même chose
 // sans avoir à réimplémenter la logique de concaténation partout.
 $rows = $stmt->fetchAll();
-foreach ($rows as &$r) {
-    if (!empty($r['etudiant2'])) {
-        $r['etudiant_affiche'] = $r['etudiant'] . ' & ' . $r['etudiant2'];
-    } else {
-        $r['etudiant_affiche'] = $r['etudiant'];
+
+// Récupère les N membres de chaque soutenance via la table de liaison
+// (solo, binôme, trinôme, ...) en un seul aller-retour, puis construit
+// `etudiants` (liste ordonnée), `etudiant_affiche` ("N1 & N2 & N3") et les
+// champs legacy `etudiant2` / `code_etudiant2` (2e membre) pour compat.
+$soutenanceIds = array_map(fn($r) => $r['id'], $rows);
+$membresParSoutenance = [];
+if ($soutenanceIds) {
+    $ph = implode(',', array_fill(0, count($soutenanceIds), '?'));
+    $stmtM = $pdo->prepare("SELECT se.soutenance_id, se.etudiant_id, se.ordre, e.code_etudiant, CONCAT(e.prenom,' ',e.nom) as nom
+        FROM soutenance_etudiants se JOIN etudiants e ON e.id = se.etudiant_id
+        WHERE se.soutenance_id IN ($ph) ORDER BY se.ordre");
+    $stmtM->execute($soutenanceIds);
+    foreach ($stmtM->fetchAll() as $m) {
+        $membresParSoutenance[(int) $m['soutenance_id']][] = $m;
     }
+}
+
+foreach ($rows as &$r) {
+    $membres = $membresParSoutenance[(int) $r['id']] ?? [];
+    if (!$membres) {
+        // Repli : données héritées du schéma sans table de liaison
+        $membres = [['etudiant_id' => $r['etudiant_id'], 'code_etudiant' => $r['code_etudiant'], 'nom' => $r['etudiant']]];
+        if (!empty($r['etudiant2'])) {
+            $membres[] = ['etudiant_id' => $r['etudiant2_id_verif'], 'code_etudiant' => $r['code_etudiant2'], 'nom' => $r['etudiant2']];
+        }
+    }
+    $r['etudiants'] = array_map(fn($m) => [
+        'id' => (int) $m['etudiant_id'],
+        'code_etudiant' => $m['code_etudiant'],
+        'nom' => $m['nom'],
+    ], $membres);
+    $r['etudiant_affiche'] = implode(' & ', array_column($r['etudiants'], 'nom'));
+    // Champs legacy : etudiant = 1er membre, etudiant2 = 2e membre (ou null)
+    $r['etudiant'] = $r['etudiants'][0]['nom'] ?? '';
+    $r['code_etudiant'] = $r['etudiants'][0]['code_etudiant'] ?? '';
+    $r['etudiant2'] = $r['etudiants'][1]['nom'] ?? null;
+    $r['code_etudiant2'] = $r['etudiants'][1]['code_etudiant'] ?? null;
+    $r['etudiant2_id'] = $r['etudiants'][1]['id'] ?? null;
     unset($r['etudiant2_id_verif']);
     // L'explication IA est stockée en JSON : on la renvoie décodée au frontend.
     if (!empty($r['explication_ia'])) {

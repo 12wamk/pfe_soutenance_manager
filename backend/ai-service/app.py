@@ -186,6 +186,21 @@ def fetch_data():
     for s in soutenances:
         s['mots_cles_projet'] = json.loads(s['mots_cles_projet']) if s.get('mots_cles_projet') else []
 
+    # Membres des soutenances via la table de liaison (solo, binôme, trinôme, ...)
+    # et fusion des mots-clés : le matching IA tient compte de TOUS les membres.
+    mots_par_etudiant = {e['id']: e.get('mots_cles_all', []) for e in etudiants}
+    cursor.execute("SELECT soutenance_id, etudiant_id FROM soutenance_etudiants ORDER BY soutenance_id, ordre")
+    membres_par_soutenance = {}
+    for m in cursor.fetchall():
+        membres_par_soutenance.setdefault(m['soutenance_id'], []).append(m['etudiant_id'])
+    for s in soutenances:
+        ids = membres_par_soutenance.get(s['id']) or [s['etudiant_id']]
+        fusionnes = []
+        for eid in ids:
+            fusionnes.extend(mots_par_etudiant.get(eid, []))
+        # déduplique en gardant l'ordre (dict.fromkeys)
+        s['mots_cles_all'] = list(dict.fromkeys(fusionnes))
+
     # Jours du calendrier
     cursor.execute("""
         SELECT jc.* FROM jours_calendrier jc
@@ -250,6 +265,20 @@ def fetch_data():
         'periode': periode,
         'publications': publications,
     }
+
+
+def etudiant_effectif(etu_by_id, s):
+    """
+    Fiche étudiant « effective » d'une soutenance pour le matching : la fiche du
+    membre principal, enrichie des mots-clés de TOUS les membres du groupe
+    (solo, binôme, trinôme, ...) via la table de liaison. Sans cela, l'IA ne
+    tiendrait compte que du 1er étudiant.
+    """
+    e = dict(etu_by_id.get(s.get('etudiant_id'), {}))
+    if s.get('mots_cles_all'):
+        e['mots_cles_all'] = s['mots_cles_all']
+        e['mots_cles_projet'] = s['mots_cles_all']
+    return e
 
 
 # ============================================================
@@ -663,7 +692,7 @@ def solve_auto_planning(data, mode='complet', date_cible=None, soutenances_fixes
     # Pré-calculer les scores de pertinence
     scores_pertinence = {}
     for s in soutenances_a_traiter:
-        etudiant = etu_by_id.get(s['etudiant_id'])
+        etudiant = etudiant_effectif(etu_by_id, s)
         mots_cles = etudiant.get('mots_cles_all', []) if etudiant else []
 
         for ens in enseignants:
@@ -984,7 +1013,7 @@ def solve_auto_planning(data, mode='complet', date_cible=None, soutenances_fixes
                                 pres = ens_by_id.get(pres_id, {})
                                 rap = ens_by_id.get(rap_id, {})
                                 salle = next((sl for sl in salles if sl['id'] == salle_id), {})
-                                etudiant = etu_by_id.get(s['etudiant_id'], {})
+                                etudiant = etudiant_effectif(etu_by_id, s)
 
                                 pertinence_pres = scores_pertinence.get((s_id, pres_id), 0)
                                 pertinence_rap = scores_pertinence.get((s_id, rap_id), 0)
@@ -1100,7 +1129,7 @@ def solve_auto_planning_fallback(data, mode='complet', date_cible=None, soutenan
 
     scores_pertinence = {}
     for s in soutenances_a_traiter:
-        etudiant = etu_by_id.get(s['etudiant_id'])
+        etudiant = etudiant_effectif(etu_by_id, s)
         mots_cles = etudiant.get('mots_cles_all', []) if etudiant else []
         for ens in enseignants:
             if ens['id'] == s.get('encadrant_id'):
@@ -1279,7 +1308,7 @@ def solve_auto_planning_fallback(data, mode='complet', date_cible=None, soutenan
 
         pres = ens_by_id.get(pres_id, {})
         rap = ens_by_id.get(rap_id, {})
-        etudiant = etu_by_id.get(s['etudiant_id'], {})
+        etudiant = etudiant_effectif(etu_by_id, s)
         salle = next((sl for sl in salles if sl['id'] == salle_id), {})
 
         planning.append({
