@@ -52,13 +52,13 @@ module.exports = {
     open: true,
     proxy: {
       '/api': {
-        target: 'http://localhost/pfe_soutenance_manager/backend',
+        target: 'http://localhost/pfe-soutenance-manager/backend',
         changeOrigin: true,
         secure: false,
         withCredentials: true,
       },
       '/uploads': {
-        target: 'http://localhost/pfe_soutenance_manager/backend',
+        target: 'http://localhost/pfe-soutenance-manager/backend',
         changeOrigin: true,
         pathRewrite: { '^/uploads': '/uploads' },
       },

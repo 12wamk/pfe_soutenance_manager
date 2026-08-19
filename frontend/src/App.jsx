@@ -5,6 +5,8 @@ import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 
 import LoginPage from './pages/LoginPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import EnseignantsPage from './pages/EnseignantsPage';
 import EtudiantsPage from './pages/EtudiantsPage';
@@ -32,6 +34,8 @@ export default function App() {
           <Toaster position="top-right" toastOptions={{ style: { fontSize: 14 } }} />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/enseignants" element={<EnseignantsPage />} />
             <Route path="/etudiants" element={<EtudiantsPage />} />

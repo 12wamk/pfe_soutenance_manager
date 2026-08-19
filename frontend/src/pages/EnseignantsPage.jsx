@@ -165,7 +165,7 @@ export default function EnseignantsPage() {
     }));
   };
 
-  const showFiltre = user?.role === 'admin' || user?.role === 'chef_dept';
+  const showFiltre = user?.role === 'chef_dept';
   const isAdmin = user?.role === 'admin';
 
   return (

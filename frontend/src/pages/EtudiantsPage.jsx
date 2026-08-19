@@ -85,8 +85,18 @@ export default function EtudiantsPage() {
   };
 
   const handleDelete = async (id) => {
-    try { await adminApi.deleteEtudiant(id); toast.success('Étudiant supprimé'); load(); }
-    catch (e) { toast.error(e.response?.data?.message || 'Erreur'); }
+    try {
+      await adminApi.deleteEtudiant(id);
+      toast.success('Étudiant supprimé');
+      load();
+    } catch (e) {
+      const data = e.response?.data;
+      if (data?.data?.binome_detected) {
+        toast.error(data.message || "Cet étudiant est membre d'un binôme actif", { duration: 6000 });
+        return;
+      }
+      toast.error(data?.message || 'Erreur');
+    }
   };
 
   const ouvrirFiche = (groupe) => {

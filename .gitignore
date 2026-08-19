@@ -11,6 +11,9 @@ backend/.env
 # User uploads (profile photos)
 backend/uploads/
 
+# Runtime state (rate limiting, etc.)
+backend/data/
+
 # Logs
 backend/mail_log.txt
 *.log

@@ -28,8 +28,9 @@
  */
 
 // MAIL_ENABLED peut être surchargé par la variable d'environnement (ex: Docker).
-// Valeur par défaut : true (comportement historique en local).
-define('MAIL_ENABLED', getenv('MAIL_ENABLED') !== false ? filter_var(getenv('MAIL_ENABLED'), FILTER_VALIDATE_BOOLEAN) : true);
+// Valeur par défaut : false — les emails sont journalisés sans envoi réel tant
+// qu'aucune configuration SMTP valide n'est fournie.
+define('MAIL_ENABLED', getenv('MAIL_ENABLED') !== false ? filter_var(getenv('MAIL_ENABLED'), FILTER_VALIDATE_BOOLEAN) : false);
 
 define('SMTP_HOST', 'smtp.gmail.com');
 define('SMTP_PORT', 587);           // 587 = STARTTLS (recommandé), 465 = SSL direct

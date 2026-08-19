@@ -121,19 +121,7 @@ export default function LoginPage() {
                 </Link>
               </div>
 
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-xs text-slate-400">ou</span>
-                <div className="flex-1 h-px bg-slate-200" />
-              </div>
-
-              <p className="text-center text-sm text-slate-500">
-                Pas de compte ?{' '}
-                <Link to="/register" className="text-blue-600 font-medium hover:underline">
-                  Créer un compte encadrant
-                </Link>
-              </p>
-            </form>
+              </form>
 
             <div className="mt-4 pt-4 border-t border-dashed border-slate-200">
               <p className="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1.5">

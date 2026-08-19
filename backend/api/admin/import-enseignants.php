@@ -30,9 +30,9 @@ while (($row = fgetcsv($handle)) !== false) {
     if (count($row) < 3) { $errors[] = "Ligne $line : colonnes insuffisantes"; continue; }
     [$nom, $prenom, $email] = array_pad($row, 3, null);
     $departementNom = trim($row[3] ?? '');
-    $grade = trim($row[4] ?? '');
+    $grade = sanitizeFormula(trim($row[4] ?? ''));
 
-    $nom = trim($nom); $prenom = trim($prenom); $email = trim($email);
+    $nom = sanitizeFormula(trim($nom)); $prenom = sanitizeFormula(trim($prenom)); $email = sanitizeFormula(trim($email));
     if (!$nom || !$prenom || !$email) { $errors[] = "Ligne $line : champs obligatoires manquants"; continue; }
 
     $departementId = null;

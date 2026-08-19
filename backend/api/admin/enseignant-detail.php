@@ -28,6 +28,13 @@ if ($auth['role'] === 'chef_dept') {
     }
 }
 
+// Sécurité : un encadrant ne peut voir le détail que de ses propres données
+if ($auth['role'] === 'encadrant') {
+    if ((int) $id !== (int) $auth['id']) {
+        fail('Accès non autorisé à cet enseignant', 403);
+    }
+}
+
 $stmtInfo = $pdo->prepare("SELECT id, nom, prenom, email, role, departement_id, max_soutenances_jour, ajustement_rapporteur, ajustement_president FROM users WHERE id = ?");
 $stmtInfo->execute([$id]);
 $info = $stmtInfo->fetch();

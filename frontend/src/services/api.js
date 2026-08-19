@@ -11,7 +11,7 @@ const BASE = import.meta.env.VITE_API_BASE_URL || '';
 // pas via le proxy Vite (qui ne couvre que /api). Il faut donc l'URL complète
 // du backend pour construire un <img src>. Ajustez VITE_BACKEND_STATIC_URL dans
 // .env si votre backend n'est pas à l'emplacement XAMPP standard.
-const BACKEND_STATIC_URL = import.meta.env.VITE_BACKEND_STATIC_URL || 'http://localhost/pfe_soutenance_manager/backend';
+const BACKEND_STATIC_URL = import.meta.env.VITE_BACKEND_STATIC_URL || 'http://localhost/pfe-soutenance-manager/backend';
 
 /** Construit l'URL complète d'une photo de profil à partir du chemin relatif renvoyé par l'API. */
 export function urlPhoto(photoUrl) {
@@ -44,6 +44,8 @@ export const authApi = {
   updatePassword: (data) => client.post('/api/auth/update-password.php', data),
   updatePhoto: (formData) => client.post('/api/auth/update-photo.php', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   updateProfileExpertise: (data) => client.put('/api/auth/me.php', data),
+  forgotPassword: (data) => client.post('/api/auth/forgot-password.php', data),
+  resetPassword: (data) => client.post('/api/auth/reset-password.php', data),
 };
 
 export const adminApi = {
@@ -88,6 +90,7 @@ export const soutenancesApi = {
   annulerJury: (data) => client.post('/api/soutenances/annuler-jury.php', data),
   reaffecterJury: (data) => client.post('/api/soutenances/reaffecter-jury.php', data),
   annuler: (data) => client.post('/api/soutenances/annuler.php', data),
+  modifierBinome: (data) => client.post('/api/soutenances/modifier-binome.php', data),
   getDisponibilites: () => client.get('/api/soutenances/disponibilites.php'),
   setDisponibilite: (data) => client.post('/api/soutenances/disponibilites.php', data),
   getCreneaux: (date, excludeId) => client.get('/api/soutenances/creneaux.php', { params: excludeId ? { date, exclude_id: excludeId } : { date } }),

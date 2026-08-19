@@ -1,13 +1,11 @@
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, GraduationCap, Calendar, Upload, Settings,
-  LogOut, Moon, Sun, BookOpen, ClipboardList, UserCheck, Inbox,
-  Building2, Send, Scale,Clock,Brain
+  BookOpen, ClipboardList, UserCheck, Inbox,
+  Building2, Send, Scale, Clock
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { useTheme } from '../../context/ThemeContext';
-import { urlPhoto } from '../../services/api';
 
 
 const iconColors = {
@@ -17,7 +15,6 @@ const iconColors = {
   '/invitations': 'bg-red-500', '/options': 'bg-teal-500', '/participation': 'bg-indigo-500',
   '/charge-jury': 'bg-pink-500', '/import-enseignants': 'bg-violet-500',
   '/soutenances-du-jour': 'bg-amber-500',
-  '/impact-ia': 'bg-purple-600',
 };
 
 const navConfig = {
@@ -28,7 +25,6 @@ const navConfig = {
       { to: '/etudiants', icon: GraduationCap, label: 'Étudiants' },
       { to: '/soutenances', icon: Calendar, label: 'Soutenances' },
       { to: '/charge-jury', icon: Scale, label: 'Charge Jury' },
-      { to: '/impact-ia', icon: Brain, label: 'Impact IA + RO' },
     ]},
     { section: 'Administration', items: [
       { to: '/options', icon: Building2, label: 'Départements & Spécialités' },
@@ -66,13 +62,9 @@ const navConfig = {
 };
 
 export default function Sidebar({ collapsed = false }) {
-  const { user, logout } = useAuth();
-  const { dark, toggle } = useTheme();
-  const navigate = useNavigate();
+  const { user } = useAuth();
 
   const sections = navConfig[user?.role] || [];
-  const initials = user ? `${user.prenom?.[0]}${user.nom?.[0]}`.toUpperCase() : 'U';
-  const roleLabel = { admin: 'Administrateur', chef_dept: 'Chef de département', encadrant: 'Encadrant' };
 
   return (
     <aside className={`flex flex-col h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-all duration-300 ${collapsed ? 'w-16' : 'w-64'}`}>
@@ -94,28 +86,6 @@ export default function Sidebar({ collapsed = false }) {
           </div>
         ))}
       </nav>
-
-      <div className="border-t border-slate-200 dark:border-slate-800 p-3 space-y-1">
-        <button onClick={toggle} className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-slate-500 hover:text-blue-600 hover:bg-blue-50/60 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors ${collapsed ? 'justify-center' : ''}`}>
-          {dark ? <Sun size={18} /> : <Moon size={18} />}
-          {!collapsed && <span>{dark ? 'Mode clair' : 'Mode sombre'}</span>}
-        </button>
-        <button onClick={() => navigate('/profil')} className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-slate-500 hover:text-blue-600 hover:bg-blue-50/60 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors ${collapsed ? 'justify-center' : ''}`}>
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-400 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden">
-            {user?.photo_url ? <img src={urlPhoto(user.photo_url)} alt="" className="w-full h-full object-cover" /> : initials}
-          </div>
-          {!collapsed && (
-            <div className="flex-1 text-left">
-              <div className="text-slate-700 dark:text-white text-xs font-medium">{user?.prenom} {user?.nom}</div>
-              <div className="text-slate-400 text-[10px]">{roleLabel[user?.role]}</div>
-            </div>
-          )}
-        </button>
-        <button onClick={() => { logout(); navigate('/login'); }} className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-red-500/80 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors ${collapsed ? 'justify-center' : ''}`}>
-          <LogOut size={18} />
-          {!collapsed && <span>Déconnexion</span>}
-        </button>
-      </div>
     </aside>
   );
 }

@@ -22,4 +22,6 @@ $hash = password_hash($new, PASSWORD_DEFAULT);
 $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
 $stmt->execute([$hash, $auth['id']]);
 
-ok(null, 'Mot de passe mis à jour avec succès');
+jwtRevoke($pdo, $auth['id']);
+
+ok(null, 'Mot de passe mis à jour avec succès, veuillez vous reconnecter');

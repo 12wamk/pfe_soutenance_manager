@@ -116,8 +116,8 @@ while (($row = fgetcsv($handle)) !== false) {
     $dateDebut = parseDate($row[7] ?? null);
     $dateFin = parseDate($row[8] ?? null);
 
-    $code = trim($code); $nom = trim($nom); $prenom = trim($prenom); $niveau = trim($niveau ?? '');
-    $titre = trim($titre ?? ''); $encNomT = trim($encNom ?? ''); $encPrenomT = trim($encPrenom ?? '');
+    $code = sanitizeFormula(trim($code)); $nom = sanitizeFormula(trim($nom)); $prenom = sanitizeFormula(trim($prenom)); $niveau = sanitizeFormula(trim($niveau ?? ''));
+    $titre = sanitizeFormula(trim($titre ?? '')); $encNomT = sanitizeFormula(trim($encNom ?? '')); $encPrenomT = sanitizeFormula(trim($encPrenom ?? ''));
     if (!$code || !$nom || !$prenom) { $errors[] = "Ligne $line : champs obligatoires manquants (code/nom/prénom)"; continue; }
 
     [$optionId, $departementId] = deduireSpecialite($pdo, $niveau);

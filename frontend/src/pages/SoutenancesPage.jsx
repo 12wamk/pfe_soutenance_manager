@@ -24,7 +24,7 @@ const statutConfig = {
 
 const emptyForm = { etudiant_id: '', etudiant2_id: '', etudiant3_id: '', rapporteur_id: '', president_id: '', date: '', heure: '', salle: '' };
 const emptyFilters = { date: '', section: 'toutes', statutValidation: '', niveau: '', recherche: '', salle: '' };
-const emptyEditForm = { date: '', heure: '', salle: '', president_id: '', rapporteur_id: '' };
+const emptyEditForm = { date: '', heure: '', salle: '', president_id: '', rapporteur_id: '', etudiant2_id: '' };
 
 /** Affiche le(s) nom(s) étudiant(s) d'une soutenance : "Nom1", "Nom1 & Nom2" (binôme) ou "Nom1 & Nom2 & Nom3" (trinôme). */
 function nomEtudiants(s) {
@@ -219,7 +219,7 @@ export default function SoutenancesPage() {
     setEditSoutenance(s);
     setExplicationIAEdit(null);
     const heureInit = s.heure ? s.heure.slice(0, 5) : '';
-    setEditForm({ date: s.date || '', heure: heureInit, salle: s.salle || '', president_id: '', rapporteur_id: '' });
+    setEditForm({ date: s.date || '', heure: heureInit, salle: s.salle || '', president_id: '', rapporteur_id: '', etudiant2_id: s.etudiant2_id || '' });
     setEditCreneaux([]);
     setPresidentsDispo([]);
     setRapporteursDispo([]);
@@ -288,6 +288,15 @@ export default function SoutenancesPage() {
       }
       if (editForm.rapporteur_id) {
         await soutenancesApi.reaffecterJury({ soutenance_id: editSoutenance.id, role: 'rapporteur', enseignant_id: editForm.rapporteur_id });
+      }
+
+      // 3) Modification du binôme (2e étudiant), seulement si le partenaire a changé
+      const partenaireActuel = editSoutenance.etudiant2_id ? String(editSoutenance.etudiant2_id) : '';
+      if (String(editForm.etudiant2_id || '') !== partenaireActuel) {
+        await soutenancesApi.modifierBinome({
+          soutenance_id: editSoutenance.id,
+          etudiant2_id: editForm.etudiant2_id || null,
+        });
       }
 
       toast.success('Soutenance mise à jour');
@@ -757,6 +766,26 @@ export default function SoutenancesPage() {
                 <div>
                   <Input label="Salle" value={editForm.salle} onChange={setEditF('salle')} placeholder="Salle A12" />
                 </div>
+              </div>
+            </div>
+
+            {/* ---- Binôme ---- */}
+            <div>
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <Users size={13} /> Binôme (2e étudiant)
+              </h3>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">2e étudiant de la soutenance</label>
+                <select value={editForm.etudiant2_id} onChange={setEditF('etudiant2_id')}
+                  className="w-full px-3.5 py-2.5 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
+                  <option value="">— Aucun (solo) —</option>
+                  {etudiants
+                    .filter((e) => String(e.id) !== String(editSoutenance.etudiant_id))
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>{e.prenom} {e.nom} ({e.code_etudiant})</option>
+                    ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">Choisir un étudiant transforme la soutenance en binôme (même spécialité requise).</p>
               </div>
             </div>
 

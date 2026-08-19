@@ -52,3 +52,19 @@ function fail($msg = 'Erreur', $code = 400) {
     echo json_encode(['success' => false, 'message' => $msg], JSON_UNESCAPED_UNICODE);
     exit;
 }
+
+/**
+ * Neutralise les valeurs pouvant être interprétées comme des formules par
+ * Excel/LibreOffice à la réouverture d'un CSV exporté (CSV Injection) :
+ * préfixe par une apostrophe ' les valeurs commençant par =, +, -, @, tab ou CR.
+ */
+function sanitizeFormula($val) {
+    if ($val === null) return $val;
+    $val = (string) $val;
+    if ($val === '') return $val;
+    $premiers = ['=', '+', '-', '@', "\t", "\r"];
+    if (in_array($val[0], $premiers, true)) {
+        return "'" . $val;
+    }
+    return $val;
+}

@@ -48,7 +48,29 @@ function jwtRequireAuth() {
     $data = json_decode(base64UrlDecode($payload), true);
     if (!$data || ($data['exp'] ?? 0) < time()) fail('Session expirée, veuillez vous reconnecter', 401);
 
+    // Vérifie que la version JWT du token correspond à celle en base : si l'utilisateur
+    // a été déconnecté (mot de passe changé, compte supprimé, ...), le token est invalide.
+    if (isset($data['jwt_version'])) {
+        try {
+            $pdo = getDB();
+            $stmt = $pdo->prepare("SELECT jwt_version FROM users WHERE id = ?");
+            $stmt->execute([$data['id']]);
+            $row = $stmt->fetch();
+            if (!$row) fail('Compte introuvable', 401);
+            if ((int) $row['jwt_version'] !== (int) $data['jwt_version']) {
+                fail('Session révoquée, veuillez vous reconnecter', 401);
+            }
+        } catch (PDOException $e) {
+            fail('Erreur de validation de session', 401);
+        }
+    }
+
     return $data;
+}
+
+/** Révoque toutes les sessions JWT d'un utilisateur en incrémentant sa version JWT. */
+function jwtRevoke($pdo, $userId) {
+    $pdo->prepare("UPDATE users SET jwt_version = jwt_version + 1 WHERE id = ?")->execute([$userId]);
 }
 
 /** Vérifie que l'utilisateur authentifié a l'un des rôles autorisés. */

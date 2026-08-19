@@ -17,7 +17,7 @@ require_once __DIR__ . '/../../config/cors.php';
 
 $auth = jwtRequireAuth();
 if ($auth['role'] !== 'admin') {
-    erreur('Accès réservé à l\'administrateur.', 403);
+    fail('Accès réservé à l\'administrateur.', 403);
 }
 
 $pdo = getDB();
@@ -29,7 +29,7 @@ $delta        = (int) ($body['delta'] ?? 0);
 $motif        = trim($body['motif'] ?? '');
 
 if (!$enseignantId || !in_array($role, ['rapporteur', 'president'], true) || $delta === 0) {
-    erreur('Paramètres invalides.', 400);
+    fail('Paramètres invalides.', 400);
 }
 
 $colonne = $role === 'rapporteur' ? 'ajustement_rapporteur' : 'ajustement_president';
@@ -38,7 +38,7 @@ $stmt = $pdo->prepare("SELECT $colonne AS val FROM users WHERE id = ?");
 $stmt->execute([$enseignantId]);
 $row = $stmt->fetch();
 if (!$row) {
-    erreur('Enseignant introuvable.', 404);
+    fail('Enseignant introuvable.', 404);
 }
 
 $avant = (int) $row['val'];

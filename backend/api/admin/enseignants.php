@@ -11,11 +11,9 @@ if ($method === 'GET') {
     $filtre = $_GET['filtre'] ?? 'tous'; // 'mes_encadrants' | 'tous'
     $detaille = in_array($auth['role'], ['admin', 'chef_dept']); // stats de charge calculées seulement pour les vues admin/chef (évite le calcul inutile pour le simple dropdown jury)
 
-    // Le rôle 'admin' n'a pas de quota jury / d'objectif de réciprocité : on l'exclut
-    // du tableau de charge dès la requête principale quand on affiche les stats.
-    // (Pour le simple dropdown jury, on continue de l'inclure au cas où il faille
-    // pouvoir le désigner manuellement — comportement inchangé quand $detaille=false.)
-    $rolesAutorises = $detaille ? ['chef_dept', 'encadrant'] : ['admin', 'chef_dept', 'encadrant'];
+    // Correction : le rôle 'admin' doit TOUJOURS être inclus dans la liste des
+    // enseignants affichés, y compris dans la vue détaillée (charge/statistiques).
+    $rolesAutorises = ['admin', 'chef_dept', 'encadrant'];
     $placeholders = implode(',', array_fill(0, count($rolesAutorises), '?'));
 
     // v1.7 : ajustement_rapporteur / ajustement_president ajoutés à la sélection
@@ -224,6 +222,7 @@ if ($method === 'DELETE') {
     $stmt->execute([$id, $id, $id]);
     if ($stmt->fetch()['c'] > 0) {
         $pdo->prepare("UPDATE users SET is_active = 0 WHERE id = ?")->execute([$id]);
+        jwtRevoke($pdo, $id);
         ok(null, 'Enseignant désactivé (des soutenances y sont liées)');
     } else {
         $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$id]);
