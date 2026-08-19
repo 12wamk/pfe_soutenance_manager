@@ -12,8 +12,11 @@ SRC = ROOT / "backend" / "database"
 FICHIERS = [
     ("schema.sql", False),
     ("migrations/add_auto_planning_fields.sql", False),
+    ("migrations/add_explication_ia.sql", False),
     ("migrations/demo_donnees_planning.sql", False),
     ("migrations/demo_donnees_elaborees.sql", False),
+    ("migrations/add_soutenance_etudiants.sql", False),
+    ("migrations/demo_donnees_grandes.sql", False),
 ]
 
 en_tete = """-- ============================================================

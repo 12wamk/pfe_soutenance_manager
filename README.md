@@ -16,12 +16,17 @@ pfe-soutenance-manager/
 ### 1. Backend
 
 ```
-Copier backend/  ->  C:\xampp\htdocs\pfe-soutenance-manager\backend\
+Copier backend/  ->  C:\xampp\htdocs\pfe_soutenance_manager\backend\
 ```
 
 Démarrer Apache + MySQL via le panneau XAMPP, puis importer
 `backend/database/schema.sql` dans phpMyAdmin (crée la base `pfe_soutenance_manager`
 et insère un jeu de données de démonstration).
+
+Pour reconstruire la base **complète** (schéma + toutes les migrations + gros jeu de
+données de test), connectez-vous en admin puis appelez :
+`POST http://localhost/pfe_soutenance_manager/backend/api/dev/reset-data.php`
+(voir la section « Réinitialisation de la base » ci-dessous).
 
 Voir `backend/README.md` pour le détail des endpoints et les points d'attention
 (CORS, JWT_SECRET, PHPMailer, tâche CRON d'expiration).
@@ -172,6 +177,35 @@ Ouvrir `http://localhost:3000/login`.
   toutes les règles métier (R1 à R10), pour répondre avec précision même aux
   questions générales sans jamais inventer de données personnelles de l'utilisateur.
 - Design bleu ENET'COM cohérent sur toute l'application
+- **Soutenances en binôme ou trinôme (N étudiants)** : une soutenance peut concerner
+  1, 2 ou 3 étudiants via la table de liaison `soutenance_etudiants` (le membre
+  principal reste `soutenances.etudiant_id` pour compat). Le matching IA du jury
+  fusionne les mots-clés de tous les membres ; les exports (Excel / PDF / fiche), le
+  chatbot, les invitations agenda et la page Étudiants affichent « A & B & C ».
+- **Jeu de données de test étoffé** (`demo_donnees_grandes.sql`) : 40 étudiants,
+  17 enseignants, 25 soutenances (dont 2 binômes et 2 trinômes), invitations jury,
+  disponibilités/absences et publications (détection de conflits d'intérêts) — idéal
+  pour tester l'auto-planning IA.
+- **Réinitialisation de la base corrigée** : l'endpoint de reset exécute désormais
+  **toutes** les migrations (`explication_ia`, `soutenance_etudiants`) avant le gros
+  jeu de démo, pour que l'application soit pleinement fonctionnelle après un reset
+  (voir section « Réinitialisation de la base »).
+
+## Réinitialisation de la base (développeur)
+
+L'endpoint `POST /api/dev/reset-data.php` (réservé au rôle admin, JWT requis)
+supprime puis reconstruit entièrement la base de démonstration dans cet ordre :
+
+1. `schema.sql` (tables + données de base)
+2. `migrations/add_auto_planning_fields.sql` (champs IA / expertises)
+3. `migrations/add_explication_ia.sql` (colonne `explication_ia`)
+4. `migrations/demo_donnees_planning.sql` (période + jours ouverts)
+5. `migrations/demo_donnees_elaborees.sql`
+6. `migrations/add_soutenance_etudiants.sql` (table de liaison + backfill)
+7. `migrations/demo_donnees_grandes.sql` (gros jeu de test : 40 étudiants, 25 soutenances)
+
+> ⚠️ Destructif : supprime toutes les données courantes. À n'utiliser qu'en
+> développement / démonstration.
 
 ## Ce qui reste à brancher / affiner
 

@@ -20,8 +20,11 @@ $dossier = __DIR__ . '/../../database/';
 $fichiers = [
     'schema.sql',
     'migrations/add_auto_planning_fields.sql',
+    'migrations/add_explication_ia.sql',
     'migrations/demo_donnees_planning.sql',
     'migrations/demo_donnees_elaborees.sql',
+    'migrations/add_soutenance_etudiants.sql',
+    'migrations/demo_donnees_grandes.sql',
 ];
 
 function executerSql(PDO $pdo, string $sql): void {
